@@ -1,0 +1,7 @@
+// dense bias int32 [4], then M, S (gen_weights.py seed=20260712)
+000000af
+fffffdf0
+000002e8
+000005d4
+00005e10
+00000016

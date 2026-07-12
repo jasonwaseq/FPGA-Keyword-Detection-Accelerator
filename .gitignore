@@ -1,0 +1,33 @@
+# Build outputs
+build/
+sim/out/
+sim/obj_*/
+*.vcd
+*.fst
+*.o
+*.obj
+*.exe
+*.a
+*.d
+
+# FPGA flow artifacts
+*.json.tmp
+*.asc
+*.bin
+!weights/*.bin
+
+# Host build
+host/build/
+
+# Editor / OS noise
+*.swp
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+
+# Training artifacts (checkpoints are large; export products are checked in)
+training/runs/
+training/data/
+*.ckpt
+*.pt

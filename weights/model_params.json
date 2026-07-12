@@ -1,0 +1,18 @@
+{
+  "origin": "gen_weights.py seed=20260712",
+  "num_mfcc": 40,
+  "window_len": 32,
+  "conv_k": 3,
+  "conv_out_ch": 8,
+  "conv_out_len": 30,
+  "pool_size": 2,
+  "pool_out_len": 15,
+  "dense_in": 120,
+  "num_classes": 4,
+  "m_conv": 20997,
+  "s_conv": 22,
+  "m_dense": 24080,
+  "s_dense": 22,
+  "max_acc_conv": 21973,
+  "max_acc_dense": 17418
+}
