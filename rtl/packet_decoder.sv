@@ -106,9 +106,10 @@ module packet_decoder #(
   logic [15:0] crc_calc;
 
   assign crc_clear = byte_valid && (state_q == ST_HUNT) && (rx_byte == kws_pkg::PROTO_SOF);
-  assign crc_en    = byte_valid && (state_q inside {ST_VER, ST_TYPE, ST_LEN_L,
-                                                    ST_LEN_H, ST_TS, ST_FN,
-                                                    ST_PAYLOAD});
+  assign crc_en    = byte_valid && ((state_q == ST_VER)   || (state_q == ST_TYPE)
+                                 || (state_q == ST_LEN_L) || (state_q == ST_LEN_H)
+                                 || (state_q == ST_TS)    || (state_q == ST_FN)
+                                 || (state_q == ST_PAYLOAD));
 
   crc16 u_crc (
     .clk_i, .rst_ni,
@@ -122,9 +123,12 @@ module packet_decoder #(
   // Dispatch helpers
   // ---------------------------------------------------------------------------
   wire is_feature = (type_q == kws_pkg::PKT_DATA_FEATURE);
-  wire is_command = (type_q inside {kws_pkg::PKT_CMD_PING, kws_pkg::PKT_CMD_RESET,
-                                    kws_pkg::PKT_CMD_START_STREAM, kws_pkg::PKT_CMD_STOP_STREAM,
-                                    kws_pkg::PKT_CMD_READ_STATS, kws_pkg::PKT_CMD_READ_VERSION});
+  wire is_command = (type_q == kws_pkg::PKT_CMD_PING)
+                 || (type_q == kws_pkg::PKT_CMD_RESET)
+                 || (type_q == kws_pkg::PKT_CMD_START_STREAM)
+                 || (type_q == kws_pkg::PKT_CMD_STOP_STREAM)
+                 || (type_q == kws_pkg::PKT_CMD_READ_STATS)
+                 || (type_q == kws_pkg::PKT_CMD_READ_VERSION);
   wire len_valid  = is_feature ? (len_q == 16'(NUM_MFCC))
                                : (is_command ? (len_q == 16'd0) : 1'b1);
 

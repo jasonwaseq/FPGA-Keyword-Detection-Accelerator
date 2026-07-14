@@ -32,9 +32,7 @@
 // -----------------------------------------------------------------------------
 `default_nettype none
 
-module register_file
-  import kws_pkg::*;
-#(
+module register_file #(
   parameter int unsigned CLK_HZ      = kws_pkg::CLK_FREQ_HZ,
   parameter int unsigned N_CLASSES   = kws_pkg::NUM_CLASSES,
   parameter int unsigned MAX_PAYLOAD = kws_pkg::PROTO_MAX_PAYLOAD,
@@ -115,30 +113,30 @@ module register_file
         rsp_req_o       <= 1'b1;
         rsp_timestamp_o <= ts_ms_i;
         rsp_frame_o     <= cmd_frame_num_i;
-        rsp_type_o      <= PKT_RSP_ACK;
+        rsp_type_o      <= kws_pkg::PKT_RSP_ACK;
         rsp_len_o       <= LEN_W'(1);
         pl0_q           <= cmd_type_i;
 
         unique case (cmd_type_i)
-          PKT_CMD_PING: ;
-          PKT_CMD_RESET: begin
+          kws_pkg::PKT_CMD_PING: ;
+          kws_pkg::PKT_CMD_RESET: begin
             soft_clear_o <= 1'b1;
             stream_en_o  <= 1'b0;
           end
-          PKT_CMD_START_STREAM: begin
+          kws_pkg::PKT_CMD_START_STREAM: begin
             stream_en_o    <= 1'b1;
             stream_clear_o <= 1'b1;
           end
-          PKT_CMD_STOP_STREAM: begin
+          kws_pkg::PKT_CMD_STOP_STREAM: begin
             stream_en_o <= 1'b0;
           end
-          PKT_CMD_READ_STATS: begin
+          kws_pkg::PKT_CMD_READ_STATS: begin
             snapshot_o <= 1'b1;
-            rsp_type_o <= PKT_RSP_STATS;
-            rsp_len_o  <= LEN_W'(4 * STATS_NUM);
+            rsp_type_o <= kws_pkg::PKT_RSP_STATS;
+            rsp_len_o  <= LEN_W'(4 * kws_pkg::STATS_NUM);
           end
-          PKT_CMD_READ_VERSION: begin
-            rsp_type_o <= PKT_RSP_VERSION;
+          kws_pkg::PKT_CMD_READ_VERSION: begin
+            rsp_type_o <= kws_pkg::PKT_RSP_VERSION;
             rsp_len_o  <= LEN_W'(12);
           end
           default: ;  // unreachable: decoder only strobes known commands
@@ -147,7 +145,7 @@ module register_file
         rsp_req_o       <= 1'b1;
         rsp_timestamp_o <= ts_ms_i;
         rsp_frame_o     <= cmd_frame_num_i;
-        rsp_type_o      <= PKT_RSP_ERROR;
+        rsp_type_o      <= kws_pkg::PKT_RSP_ERROR;
         rsp_len_o       <= LEN_W'(2);
         pl0_q           <= err_code_i;
         pl1_q           <= err_detail_i;
@@ -158,11 +156,11 @@ module register_file
   // --- runtime configuration (defaults from kws_pkg; extension point) --------
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      cfg_thresh_o      <= CONF_THRESH;
-      cfg_vote_min_o    <= 4'(VOTE_MIN);
-      cfg_min_consec_o  <= 4'(MIN_CONSEC);
-      cfg_debounce_o    <= 8'(DEBOUNCE_INFER);
-      cfg_target_mask_o <= TARGET_MASK[N_CLASSES-1:0];
+      cfg_thresh_o      <= kws_pkg::CONF_THRESH;
+      cfg_vote_min_o    <= 4'(kws_pkg::VOTE_MIN);
+      cfg_min_consec_o  <= 4'(kws_pkg::MIN_CONSEC);
+      cfg_debounce_o    <= 8'(kws_pkg::DEBOUNCE_INFER);
+      cfg_target_mask_o <= kws_pkg::TARGET_MASK[N_CLASSES-1:0];
       cfg_pool_mode_o   <= 1'b0;   // max pooling
       cfg_smooth_en_o   <= 1'b1;
     end
@@ -176,15 +174,15 @@ module register_file
   logic [7:0] version_byte;
   always_comb begin
     unique case (pl_idx_i[3:0])
-      4'd0:    version_byte = VER_MAJOR;
-      4'd1:    version_byte = VER_MINOR;
-      4'd2:    version_byte = VER_PATCH;
-      4'd3:    version_byte = PROTO_VERSION;
-      4'd4:    version_byte = 8'(NUM_MFCC);
-      4'd5:    version_byte = 8'(WINDOW_LEN);
-      4'd6:    version_byte = 8'(WINDOW_STRIDE);
-      4'd7:    version_byte = 8'(CONV_K);
-      4'd8:    version_byte = 8'(CONV_OUT_CH);
+      4'd0:    version_byte = kws_pkg::VER_MAJOR;
+      4'd1:    version_byte = kws_pkg::VER_MINOR;
+      4'd2:    version_byte = kws_pkg::VER_PATCH;
+      4'd3:    version_byte = kws_pkg::PROTO_VERSION;
+      4'd4:    version_byte = 8'(kws_pkg::NUM_MFCC);
+      4'd5:    version_byte = 8'(kws_pkg::WINDOW_LEN);
+      4'd6:    version_byte = 8'(kws_pkg::WINDOW_STRIDE);
+      4'd7:    version_byte = 8'(kws_pkg::CONV_K);
+      4'd8:    version_byte = 8'(kws_pkg::CONV_OUT_CH);
       4'd9:    version_byte = 8'(N_CLASSES);
       4'd10:   version_byte = 8'(PARALLEL);
       4'd11:   version_byte = 8'(CLK_HZ / 1_000_000);
@@ -194,9 +192,9 @@ module register_file
 
   always_comb begin
     unique case (rsp_type_o)
-      PKT_RSP_STATS:   pl_data_o = stats_data_i[8 * pl_idx_i[1:0] +: 8];
-      PKT_RSP_VERSION: pl_data_o = version_byte;
-      PKT_RSP_ERROR:   pl_data_o = (pl_idx_i == '0) ? pl0_q : pl1_q;
+      kws_pkg::PKT_RSP_STATS:   pl_data_o = stats_data_i[8 * pl_idx_i[1:0] +: 8];
+      kws_pkg::PKT_RSP_VERSION: pl_data_o = version_byte;
+      kws_pkg::PKT_RSP_ERROR:   pl_data_o = (pl_idx_i == '0) ? pl0_q : pl1_q;
       default:         pl_data_o = pl0_q;   // ACK: echoed command type
     endcase
   end

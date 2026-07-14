@@ -8,7 +8,15 @@
 // then samples each bit cell at mid-1, mid, mid+1 clocks and takes the
 // majority. A low stop bit raises frame_err_o (data is discarded).
 //
-// FSM (see docs/fsm.md): IDLE -> START -> DATA(x8) -> STOP -> IDLE
+// The STOP state exits at the stop-bit MIDPOINT (right after its majority
+// sample), not at the cell end: the receiver starts each frame 2-3 clocks
+// late (synchronizer + edge-detect latency), and with back-to-back bytes a
+// full-cell stop wait would leave it still in STOP when the next start edge
+// arrives. Releasing at mid-stop restores half a bit cell of re-arm margin,
+// which keeps even CLKS_PER_BIT=16 operation solid (verified in simulation
+// at CLK/16 baud).
+//
+// FSM (see docs/fsm.md): IDLE -> START -> DATA(x8) -> STOP(half) -> IDLE
 //
 // Timing: CLKS_PER_BIT = CLK_FREQ_HZ / BAUD_RATE, integer division; at
 // 12 MHz / 115200 = 104.17 -> 104 (0.16% error, well within the 2% budget).
@@ -98,7 +106,8 @@ module uart_rx #(
         end
 
         ST_STOP: begin
-          if (cell_end) begin
+          // Decide right after the last majority sample (MID+1) lands.
+          if (clk_cnt_q == CNT_W'(MID + 2)) begin
             clk_cnt_q <= '0;
             state_q   <= ST_IDLE;
             if (maj) begin

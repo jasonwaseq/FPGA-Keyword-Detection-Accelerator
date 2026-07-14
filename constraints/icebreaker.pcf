@@ -1,0 +1,25 @@
+# -----------------------------------------------------------------------------
+# Project : iCE40 KWS Accelerator
+# File    : icebreaker.pcf
+# Purpose : Pin constraints for the iCEBreaker v1.1a (iCE40UP5K-SG48).
+#
+# The UART pins connect to the second channel of the on-board FT2232H, so the
+# host sees the design as the board's second COM / ttyUSB device.
+# -----------------------------------------------------------------------------
+
+# 12 MHz oscillator
+set_io -nowarn CLK        35
+
+# UART to the FTDI (board names are from the FPGA's perspective)
+set_io -nowarn RX          6
+set_io -nowarn TX          9
+
+# User button (active low) - manual reset
+set_io -nowarn BTN_N      10
+
+# Main board LEDs (active low)
+set_io -nowarn LEDR_N     11
+set_io -nowarn LEDG_N     37
+
+# PMOD 1A pin 1 - IRQ output for an external observer
+set_io -nowarn P1A1        4

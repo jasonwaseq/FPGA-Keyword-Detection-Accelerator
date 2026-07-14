@@ -39,17 +39,23 @@ module activation_unit #(
   logic signed [PROD_W-1:0] prod, rounded, shifted;
   logic signed [DATA_W-1:0] sat;
 
+  // Saturation detection by sign-extension check rather than magnitude
+  // comparison: shifted fits INT8 iff its bits above [DATA_W-2] are a pure
+  // sign extension. Equality reductions map to LUT trees; the > / <
+  // comparators they replace each cost a PROD_W-long carry chain.
+  logic [PROD_W-1:DATA_W-1] hi;
   always_comb begin
     prod    = acc_i * signed'({1'b0, mult_i});
     rounded = prod + (PROD_W'(1) <<< (shift_i - 5'd1));
     shifted = rounded >>> shift_i;
 
-    if (shifted > PROD_W'(2 ** (DATA_W - 1) - 1)) begin
-      sat = DATA_W'(2 ** (DATA_W - 1) - 1);          //  127
-    end else if (shifted < -(PROD_W'(2 ** (DATA_W - 1)))) begin
-      sat = -(DATA_W'(2 ** (DATA_W - 1)));           // -128
+    hi = shifted[PROD_W-1:DATA_W-1];
+    if ((hi == '0) || (hi == '1)) begin
+      sat = shifted[DATA_W-1:0];                        // in range
+    end else if (shifted[PROD_W-1]) begin
+      sat = -(DATA_W'(2 ** (DATA_W - 1)));              // -128
     end else begin
-      sat = DATA_W'(shifted);
+      sat = DATA_W'(2 ** (DATA_W - 1) - 1);             //  127
     end
   end
 

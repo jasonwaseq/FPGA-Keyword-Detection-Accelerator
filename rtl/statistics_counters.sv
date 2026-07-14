@@ -2,17 +2,20 @@
 // Project : iCE40 KWS Accelerator
 // Module  : statistics_counters
 // Purpose : Sixteen 32-bit performance/health counters (map: kws_pkg
-//           stat_idx_e) with an atomic snapshot for tear-free readout.
+//           stat_idx_e) with a snapshot bank for tear-free readout.
 //
-// A READ_STATS command pulses snapshot_i; the full counter bank is captured
-// into shadow registers in one cycle and the RSP_STATS payload is served from
-// the shadow, so a 64-byte readout (~5.6 ms on the wire) is self-consistent
-// even though the live counters keep counting. The 512 shadow flip-flops are
-// the price of atomicity; a RAM-based sequential snapshot would race the
-// encoder for the same reason the live bank can't be read directly.
+// A READ_STATS command pulses snapshot_i; the counter bank is copied into a
+// snapshot RAM over NUM cycles (one word per cycle), and the RSP_STATS
+// payload is served from that RAM with a synchronous read. Each word is
+// captured atomically; cross-word skew is bounded by NUM cycles (1.3 us at
+// 12 MHz), invisible next to the 5.6 ms wire time of the readout. The RAM
+// implementation replaces an earlier 512-flip-flop shadow register bank -
+// two EBRs are far cheaper than 512 LCs on the UP5K. The copy provably
+// finishes before the encoder fetches payload byte 0 (the packet header
+// alone takes >= NUM cycles to emit; asserted in simulation).
 //
-// Wrap behaviour: all counters wrap mod 2^32. kws_pkg::STAT_UPTIME_CYC and
-// kws_pkg::STAT_CONV_BUSY wrap in ~358 s at 12 MHz; hosts must difference successive
+// Wrap behaviour: all counters wrap mod 2^32. STAT_UPTIME_CYC and
+// STAT_CONV_BUSY wrap in ~358 s at 12 MHz; hosts must difference successive
 // snapshots (the host app does).
 // -----------------------------------------------------------------------------
 `default_nettype none
@@ -43,14 +46,14 @@ module statistics_counters #(
   // Utilization levels (counted every cycle they are high)
   input  wire         conv_busy_i,
 
-  // Snapshot + readout
+  // Snapshot + readout (synchronous read: rd_data_o valid 1 cycle after
+  // rd_idx_i; the packet encoder's 2-cycle payload fetch absorbs this)
   input  wire         snapshot_i,
   input  wire  [3:0]  rd_idx_i,
   output logic [31:0] rd_data_o
 );
 
-  logic [31:0] cnt_q  [NUM];
-  logic [31:0] snap_q [NUM];
+  logic [31:0] cnt_q [NUM];
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
@@ -84,17 +87,37 @@ module statistics_counters #(
     end
   end
 
-  // Atomic snapshot: the whole bank is captured in a single edge, so the
-  // encoder's byte-serial readout can never observe a torn counter.
+  // Snapshot RAM (EBR): sequential copy, one counter per cycle.
+  logic [31:0]            snap_ram [NUM];
+  logic [$clog2(NUM)-1:0] copy_idx_q;
+  logic                   copy_busy_q;
+
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      for (int i = 0; i < NUM; i++) snap_q[i] <= '0;
+      copy_idx_q  <= '0;
+      copy_busy_q <= 1'b0;
     end else if (snapshot_i) begin
-      for (int i = 0; i < NUM; i++) snap_q[i] <= cnt_q[i];
+      copy_idx_q  <= '0;
+      copy_busy_q <= 1'b1;
+    end else if (copy_busy_q) begin
+      copy_idx_q <= copy_idx_q + 1'b1;
+      if (32'(copy_idx_q) == NUM - 1) copy_busy_q <= 1'b0;
     end
   end
 
-  assign rd_data_o = snap_q[rd_idx_i];
+  always_ff @(posedge clk_i) begin
+    if (copy_busy_q) snap_ram[copy_idx_q] <= cnt_q[copy_idx_q];
+    rd_data_o <= snap_ram[rd_idx_i];
+  end
+
+`ifndef SYNTHESIS
+  // The copy must never still be running when a readout could land; the
+  // encoder needs >= 15 cycles of header emission before the first fetch.
+  always_ff @(posedge clk_i) begin
+    assert (!(snapshot_i && copy_busy_q))
+      else $error("statistics_counters: snapshot re-triggered during copy");
+  end
+`endif
 
 endmodule : statistics_counters
 

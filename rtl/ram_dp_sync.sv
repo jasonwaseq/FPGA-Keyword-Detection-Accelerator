@@ -33,12 +33,11 @@ module ram_dp_sync #(
     rd_data_o <= mem[rd_addr_i];
   end
 
-`ifndef SYNTHESIS
-  always_ff @(posedge clk_i) begin
-    assert (!(wr_en_i && (wr_addr_i == rd_addr_i)))
-      else $warning("ram_dp_sync: read-during-write at addr %0h", wr_addr_i);
-  end
-`endif
+  // Note: no read-during-write assertion here - an idle read port legally
+  // parks on any address (e.g. the conv engine holds address 0 between
+  // windows while the decoder writes). The system-level guarantee that no
+  // consumer reads a location in the cycle it is written is enforced by the
+  // full-system bench comparing every datapath value against the reference.
 
 endmodule : ram_dp_sync
 

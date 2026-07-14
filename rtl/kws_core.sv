@@ -28,9 +28,7 @@
 // -----------------------------------------------------------------------------
 `default_nettype none
 
-module kws_core
-  import kws_pkg::*;
-#(
+module kws_core #(
   parameter int unsigned CLK_HZ       = kws_pkg::CLK_FREQ_HZ,
   parameter int unsigned BAUD_RATE    = kws_pkg::UART_BAUD,
   parameter int unsigned PARALLEL     = kws_pkg::PARALLEL_OUT_CH,
@@ -51,10 +49,10 @@ module kws_core
   output logic stream_active_o
 );
 
-  localparam int unsigned FR_W  = $clog2(HIST_DEPTH);
-  localparam int unsigned CO_W  = $clog2(NUM_MFCC);
-  localparam int unsigned LEN_W = $clog2(PROTO_MAX_PAYLOAD + 1);
-  localparam int unsigned IDX_W = $clog2(PROTO_MAX_PAYLOAD);
+  localparam int unsigned FR_W  = $clog2(kws_pkg::HIST_DEPTH);
+  localparam int unsigned CO_W  = $clog2(kws_pkg::NUM_MFCC);
+  localparam int unsigned LEN_W = $clog2(kws_pkg::PROTO_MAX_PAYLOAD + 1);
+  localparam int unsigned IDX_W = $clog2(kws_pkg::PROTO_MAX_PAYLOAD);
 
   // ===========================================================================
   // Time bases
@@ -108,8 +106,8 @@ module kws_core
   logic [31:0]     cmd_fn, cmd_ts;
 
   packet_decoder #(
-    .NUM_MFCC    (NUM_MFCC),
-    .MAX_PAYLOAD (PROTO_MAX_PAYLOAD),
+    .NUM_MFCC    (kws_pkg::NUM_MFCC),
+    .MAX_PAYLOAD (kws_pkg::PROTO_MAX_PAYLOAD),
     .TIMEOUT_CYCLES (CLK_HZ / 10)   // 100 ms
   ) u_dec (
     .clk_i, .rst_ni,
@@ -144,7 +142,7 @@ module kws_core
   logic signed [7:0]      cfg_thresh;
   logic [3:0]             cfg_vote_min, cfg_min_consec;
   logic [7:0]             cfg_debounce;
-  logic [NUM_CLASSES-1:0] cfg_target_mask;
+  logic [kws_pkg::NUM_CLASSES-1:0] cfg_target_mask;
   logic                   cfg_pool_mode, cfg_smooth_en;
   logic        rsp_req, rsp_ack;
   logic [7:0]  rsp_type;
@@ -155,8 +153,8 @@ module kws_core
 
   register_file #(
     .CLK_HZ      (CLK_HZ),
-    .N_CLASSES   (NUM_CLASSES),
-    .MAX_PAYLOAD (PROTO_MAX_PAYLOAD),
+    .N_CLASSES   (kws_pkg::NUM_CLASSES),
+    .MAX_PAYLOAD (kws_pkg::PROTO_MAX_PAYLOAD),
     .PARALLEL    (PARALLEL)
   ) u_regs (
     .clk_i, .rst_ni,
@@ -210,7 +208,7 @@ module kws_core
   // Feature buffer + window scheduler
   // ===========================================================================
   logic [FR_W-1:0] wr_frame, feat_rd_frame, win_base;
-  logic [$clog2(WINDOW_LEN):0] frames_total;
+  logic [$clog2(kws_pkg::WINDOW_LEN):0] frames_total;
   logic [31:0]     newest_fn, newest_ts;
   logic [CO_W-1:0] feat_rd_coef;
   logic [7:0]      feat_rd_data;
@@ -218,10 +216,10 @@ module kws_core
   logic [31:0]     win_fn, win_ts;
 
   feature_buffer #(
-    .DATA_W     (DATA_W),
-    .NUM_MFCC   (NUM_MFCC),
-    .HIST_DEPTH (HIST_DEPTH),
-    .WINDOW_LEN (WINDOW_LEN)
+    .DATA_W     (kws_pkg::DATA_W),
+    .NUM_MFCC   (kws_pkg::NUM_MFCC),
+    .HIST_DEPTH (kws_pkg::HIST_DEPTH),
+    .WINDOW_LEN (kws_pkg::WINDOW_LEN)
   ) u_fbuf (
     .clk_i, .rst_ni,
     .clear_i            (clr_stream),
@@ -244,9 +242,9 @@ module kws_core
   wire  engine_busy = conv_busy | pool_busy | cls_busy | smooth_busy;
 
   window_scheduler #(
-    .HIST_DEPTH    (HIST_DEPTH),
-    .WINDOW_LEN    (WINDOW_LEN),
-    .WINDOW_STRIDE (WINDOW_STRIDE)
+    .HIST_DEPTH    (kws_pkg::HIST_DEPTH),
+    .WINDOW_LEN    (kws_pkg::WINDOW_LEN),
+    .WINDOW_STRIDE (kws_pkg::WINDOW_STRIDE)
   ) u_sched (
     .clk_i, .rst_ni,
     .clear_i            (clr_stream),
@@ -264,35 +262,43 @@ module kws_core
     .drop_o             (win_drop)
   );
 
-  // Latency reference: cycle stamp of the most recent window issue.
-  logic [31:0] lat_start_q;
+  // Latency reference: cycle stamp of the most recent window issue. The
+  // elapsed-time subtraction is registered so the 32-bit carry chain never
+  // concatenates with its consumers (statistics adder / event capture) in
+  // one cycle - lat_now is one cycle stale, an error of 83 ns on a
+  // millisecond-scale measurement.
+  logic [31:0] lat_start_q, lat_now;
   always_ff @(posedge clk_i or negedge rst_ni) begin
-    if (!rst_ni)    lat_start_q <= '0;
-    else if (issue) lat_start_q <= cycles;
+    if (!rst_ni) begin
+      lat_start_q <= '0;
+      lat_now     <= '0;
+    end else begin
+      if (issue) lat_start_q <= cycles;
+      lat_now <= cycles - lat_start_q;
+    end
   end
-  wire [31:0] lat_now = cycles - lat_start_q;
 
   // ===========================================================================
   // Layer engines and their memories
   // ===========================================================================
   // --- convolution -----------------------------------------------------------
-  localparam int unsigned KA_W = $clog2(CONV_OUT_CH * CONV_K * NUM_MFCC);
-  localparam int unsigned AA_W = $clog2(CONV_OUT_LEN * CONV_OUT_CH);
+  localparam int unsigned KA_W = $clog2(kws_pkg::CONV_OUT_CH * kws_pkg::CONV_K * kws_pkg::NUM_MFCC);
+  localparam int unsigned AA_W = $clog2(kws_pkg::CONV_OUT_LEN * kws_pkg::CONV_OUT_CH);
 
   logic                          conv_done;
   logic [PARALLEL-1:0][KA_W-1:0] krn_addr;
   logic [PARALLEL-1:0][7:0]      krn_data;
-  logic [$clog2(CONV_OUT_CH+2)-1:0] cbias_addr;
+  logic [$clog2(kws_pkg::CONV_OUT_CH+2)-1:0] cbias_addr;
   logic [31:0]                   cbias_data;
   logic                          act_wr_en;
   logic [AA_W-1:0]               act_wr_addr, act_rd_addr;
   logic [7:0]                    act_wr_data, act_rd_data;
 
   kernel_memory #(
-    .DATA_W   (DATA_W),
-    .OUT_CH   (CONV_OUT_CH),
-    .CONV_K   (CONV_K),
-    .IN_CH    (NUM_MFCC),
+    .DATA_W   (kws_pkg::DATA_W),
+    .OUT_CH   (kws_pkg::CONV_OUT_CH),
+    .CONV_K   (kws_pkg::CONV_K),
+    .IN_CH    (kws_pkg::NUM_MFCC),
     .PARALLEL (PARALLEL),
     .MEM_FILE (CONV_W_FILE)
   ) u_kmem (
@@ -302,7 +308,7 @@ module kws_core
   );
 
   bias_memory #(
-    .N_BIAS   (CONV_OUT_CH),
+    .N_BIAS   (kws_pkg::CONV_OUT_CH),
     .MEM_FILE (CONV_B_FILE)
   ) u_cbias (
     .clk_i,
@@ -311,15 +317,15 @@ module kws_core
   );
 
   conv1d_engine #(
-    .DATA_W     (DATA_W),
-    .ACC_W      (ACC_W),
-    .MULT_W     (MULT_W),
-    .IN_CH      (NUM_MFCC),
-    .WINDOW_LEN (WINDOW_LEN),
-    .CONV_K     (CONV_K),
-    .OUT_CH     (CONV_OUT_CH),
+    .DATA_W     (kws_pkg::DATA_W),
+    .ACC_W      (kws_pkg::ACC_W),
+    .MULT_W     (kws_pkg::MULT_W),
+    .IN_CH      (kws_pkg::NUM_MFCC),
+    .WINDOW_LEN (kws_pkg::WINDOW_LEN),
+    .CONV_K     (kws_pkg::CONV_K),
+    .OUT_CH     (kws_pkg::CONV_OUT_CH),
     .PARALLEL   (PARALLEL),
-    .HIST_DEPTH (HIST_DEPTH)
+    .HIST_DEPTH (kws_pkg::HIST_DEPTH)
   ) u_conv (
     .clk_i,
     .rst_ni        (rst_eng_n),
@@ -341,8 +347,8 @@ module kws_core
 
   // Conv activation RAM (written by conv, read by pooling)
   ram_dp_sync #(
-    .DATA_W (DATA_W),
-    .DEPTH  (CONV_OUT_LEN * CONV_OUT_CH)
+    .DATA_W (kws_pkg::DATA_W),
+    .DEPTH  (kws_pkg::CONV_OUT_LEN * kws_pkg::CONV_OUT_CH)
   ) u_act_ram (
     .clk_i,
     .wr_en_i   (act_wr_en),
@@ -353,17 +359,17 @@ module kws_core
   );
 
   // --- pooling ----------------------------------------------------------------
-  localparam int unsigned PA_W = $clog2(DENSE_IN);
+  localparam int unsigned PA_W = $clog2(kws_pkg::DENSE_IN);
 
   logic            pool_done, pool_wr_en;
   logic [PA_W-1:0] pool_wr_addr, pool_rd_addr;
   logic [7:0]      pool_wr_data, pool_rd_data;
 
   pooling_engine #(
-    .DATA_W    (DATA_W),
-    .IN_LEN    (CONV_OUT_LEN),
-    .CH        (CONV_OUT_CH),
-    .POOL_SIZE (POOL_SIZE)
+    .DATA_W    (kws_pkg::DATA_W),
+    .IN_LEN    (kws_pkg::CONV_OUT_LEN),
+    .CH        (kws_pkg::CONV_OUT_CH),
+    .POOL_SIZE (kws_pkg::POOL_SIZE)
   ) u_pool (
     .clk_i,
     .rst_ni         (rst_eng_n),
@@ -380,8 +386,8 @@ module kws_core
 
   // Pooled activation RAM (written by pooling, read by classifier)
   ram_dp_sync #(
-    .DATA_W (DATA_W),
-    .DEPTH  (DENSE_IN)
+    .DATA_W (kws_pkg::DATA_W),
+    .DEPTH  (kws_pkg::DENSE_IN)
   ) u_pool_ram (
     .clk_i,
     .wr_en_i   (pool_wr_en),
@@ -393,18 +399,18 @@ module kws_core
 
   // --- classifier ---------------------------------------------------------------
   logic        cls_done;
-  logic [$clog2(NUM_CLASSES*DENSE_IN)-1:0] wgt_addr;
+  logic [$clog2(kws_pkg::NUM_CLASSES*kws_pkg::DENSE_IN)-1:0] wgt_addr;
   logic [7:0]  wgt_data;
-  logic [$clog2(NUM_CLASSES+2)-1:0] dbias_addr;
+  logic [$clog2(kws_pkg::NUM_CLASSES+2)-1:0] dbias_addr;
   logic [31:0] dbias_data;
-  logic [NUM_CLASSES-1:0][7:0]      logits;
-  logic [$clog2(NUM_CLASSES)-1:0]   winner_idx;
+  logic [kws_pkg::NUM_CLASSES-1:0][7:0]      logits;
+  logic [$clog2(kws_pkg::NUM_CLASSES)-1:0]   winner_idx;
   logic signed [7:0]                winner_val;
 
   weight_memory #(
-    .DATA_W      (DATA_W),
-    .NUM_CLASSES (NUM_CLASSES),
-    .IN_LEN      (DENSE_IN),
+    .DATA_W      (kws_pkg::DATA_W),
+    .NUM_CLASSES (kws_pkg::NUM_CLASSES),
+    .IN_LEN      (kws_pkg::DENSE_IN),
     .MEM_FILE    (DENSE_W_FILE)
   ) u_dwgt (
     .clk_i,
@@ -413,7 +419,7 @@ module kws_core
   );
 
   bias_memory #(
-    .N_BIAS   (NUM_CLASSES),
+    .N_BIAS   (kws_pkg::NUM_CLASSES),
     .MEM_FILE (DENSE_B_FILE)
   ) u_dbias (
     .clk_i,
@@ -422,11 +428,11 @@ module kws_core
   );
 
   classifier #(
-    .DATA_W      (DATA_W),
-    .ACC_W       (ACC_W),
-    .MULT_W      (MULT_W),
-    .IN_LEN      (DENSE_IN),
-    .NUM_CLASSES (NUM_CLASSES)
+    .DATA_W      (kws_pkg::DATA_W),
+    .ACC_W       (kws_pkg::ACC_W),
+    .MULT_W      (kws_pkg::MULT_W),
+    .IN_LEN      (kws_pkg::DENSE_IN),
+    .NUM_CLASSES (kws_pkg::NUM_CLASSES)
   ) u_cls (
     .clk_i,
     .rst_ni         (rst_eng_n),
@@ -446,14 +452,14 @@ module kws_core
 
   // --- temporal smoothing + event generation ----------------------------------
   logic        detect;
-  logic [$clog2(NUM_CLASSES)-1:0] det_class;
+  logic [$clog2(kws_pkg::NUM_CLASSES)-1:0] det_class;
   logic [7:0]  det_conf;
   logic [3:0]  det_votes;
 
   temporal_smoothing #(
-    .N      (NUM_CLASSES),
-    .DATA_W (DATA_W),
-    .DEPTH  (SMOOTH_DEPTH)
+    .N      (kws_pkg::NUM_CLASSES),
+    .DATA_W (kws_pkg::DATA_W),
+    .DEPTH  (kws_pkg::SMOOTH_DEPTH)
   ) u_smooth (
     .clk_i,
     .rst_ni        (rst_eng_n),
@@ -481,8 +487,8 @@ module kws_core
   logic [7:0]  kwd_pl_data;
 
   keyword_detector #(
-    .N           (NUM_CLASSES),
-    .MAX_PAYLOAD (PROTO_MAX_PAYLOAD)
+    .N           (kws_pkg::NUM_CLASSES),
+    .MAX_PAYLOAD (kws_pkg::PROTO_MAX_PAYLOAD)
   ) u_kwd (
     .clk_i,
     .rst_ni          (rst_eng_n),
@@ -553,9 +559,10 @@ module kws_core
 
   logic       enc_wr_en;
   logic [7:0] enc_wr_data;
+  logic       txf_afull;
 
   packet_encoder #(
-    .MAX_PAYLOAD (PROTO_MAX_PAYLOAD)
+    .MAX_PAYLOAD (kws_pkg::PROTO_MAX_PAYLOAD)
   ) u_enc (
     .clk_i, .rst_ni,
     .req_valid_i     (enc_req_valid),
@@ -568,7 +575,7 @@ module kws_core
     .pl_data_i       (enc_pl_data),
     .tx_wr_en_o      (enc_wr_en),
     .tx_wr_data_o    (enc_wr_data),
-    .tx_full_i       (txf_full),
+    .tx_full_i       (txf_afull),
     .pkt_done_o      (pkt_done)
   );
 
@@ -593,6 +600,11 @@ module kws_core
     .level_o    (txf_level)
   );
 
+  // Almost-full for the encoder: its registered write lags the flow-control
+  // check by one cycle, so it must see 'full' two entries early (it is the
+  // FIFO's only writer, so exactly one write can be in flight).
+  assign txf_afull = (32'(txf_level) >= TX_FIFO_DEPTH - 2);
+
   // Pop pump: one byte in flight; uart_tx is guaranteed idle when the popped
   // byte arrives, so the valid/ready transfer always completes immediately.
   assign txf_rd_en = !txf_empty && tx_ready && !txp_inflight_q;
@@ -614,7 +626,7 @@ module kws_core
   // ===========================================================================
   // Statistics + interrupts
   // ===========================================================================
-  statistics_counters #(.NUM (STATS_NUM)) u_stats (
+  statistics_counters #(.NUM (kws_pkg::STATS_NUM)) u_stats (
     .clk_i, .rst_ni,
     .clear_i         (soft_clear),
     .frame_rx_i      (commit_ok),
@@ -658,7 +670,7 @@ module kws_core
   // winner_val/kwd_drop are covered by det_conf/assertions; FIFO levels and
   // rxf_full are debug visibility.
   // ---------------------------------------------------------------------------
-  wire _unused_ok = &{1'b0, win_ts, winner_val, kwd_drop, cmd_ts,
+  wire _unused_ok = &{1'b0, win_ts, winner_val, kwd_drop, cmd_ts, txf_full,
                       rxf_level, txf_level, rxf_full, txf_ovf, irq_pending};
 
 `ifndef SYNTHESIS

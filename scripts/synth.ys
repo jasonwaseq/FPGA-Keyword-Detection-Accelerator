@@ -1,0 +1,49 @@
+# -----------------------------------------------------------------------------
+# Project : iCE40 KWS Accelerator
+# File    : synth.ys
+# Purpose : Yosys synthesis script for the iCE40UP5K target.
+#           Run from the repository root (weight .mem paths are relative):
+#             yosys -l build/yosys.log scripts/synth.ys
+#
+# -DSYNTHESIS strips the simulation-only assertion blocks.
+# synth_ice40 -dsp maps the INT8 MAC and requantization multipliers onto
+# SB_MAC16 blocks; block RAMs (feature buffer, FIFOs, kernel ROMs) infer EBR.
+# -----------------------------------------------------------------------------
+
+read_verilog -sv -DSYNTHESIS \
+  rtl/kws_pkg.sv \
+  rtl/reset_sync.sv \
+  rtl/timestamp_gen.sv \
+  rtl/uart_rx.sv \
+  rtl/uart_tx.sv \
+  rtl/uart_fifo.sv \
+  rtl/crc16.sv \
+  rtl/rom_sync.sv \
+  rtl/ram_dp_sync.sv \
+  rtl/packet_decoder.sv \
+  rtl/packet_encoder.sv \
+  rtl/feature_memory.sv \
+  rtl/circular_buffer_controller.sv \
+  rtl/feature_buffer.sv \
+  rtl/window_scheduler.sv \
+  rtl/kernel_memory.sv \
+  rtl/weight_memory.sv \
+  rtl/bias_memory.sv \
+  rtl/relu.sv \
+  rtl/activation_unit.sv \
+  rtl/argmax.sv \
+  rtl/conv1d_engine.sv \
+  rtl/pooling_engine.sv \
+  rtl/classifier.sv \
+  rtl/confidence_accumulator.sv \
+  rtl/temporal_smoothing.sv \
+  rtl/keyword_detector.sv \
+  rtl/statistics_counters.sv \
+  rtl/register_file.sv \
+  rtl/interrupt_controller.sv \
+  rtl/kws_core.sv \
+  rtl/kws_top.sv
+
+synth_ice40 -top kws_top -dsp -json build/kws.json
+
+stat -width

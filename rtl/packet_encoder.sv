@@ -41,7 +41,9 @@ module packet_encoder #(
   output logic [$clog2(MAX_PAYLOAD)-1:0] pl_idx_o,
   input  wire  [7:0]  pl_data_i,
 
-  // TX FIFO write port
+  // TX FIFO write port. tx_full_i must be an ALMOST-full flag with >= 1
+  // entry of margin: the write is registered, so it lands one cycle after
+  // the flow-control check (kws_core provides level >= DEPTH-2).
   output logic        tx_wr_en_o,
   output logic [7:0]  tx_wr_data_o,
   input  wire         tx_full_i,

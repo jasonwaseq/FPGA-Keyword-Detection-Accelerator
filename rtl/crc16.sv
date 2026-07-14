@@ -26,14 +26,17 @@ module crc16 #(
   output logic [15:0] crc_o
 );
 
+  // Function-name assignment (not 'return') keeps the Yosys SV frontend happy.
   function automatic logic [15:0] crc16_next(input logic [15:0] c,
                                              input logic [7:0]  d);
     logic [15:0] x;
-    x = c ^ {d, 8'h00};
-    for (int i = 0; i < 8; i++) begin
-      x = x[15] ? ((x << 1) ^ POLY) : (x << 1);
+    begin
+      x = c ^ {d, 8'h00};
+      for (int i = 0; i < 8; i++) begin
+        x = x[15] ? ((x << 1) ^ POLY) : (x << 1);
+      end
+      crc16_next = x;
     end
-    return x;
   endfunction
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
