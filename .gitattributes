@@ -1,0 +1,13 @@
+# Generated artifacts must stay byte-identical across platforms (CI diffs
+# regenerated weights against the checked-in set).
+*.mem  text eol=lf
+weights/kws_weights.h text eol=lf
+weights/model_params.json text eol=lf
+*.pcf  text eol=lf
+*.sv   text
+*.c    text
+*.h    text
+*.cpp  text
+*.py   text
+*.md   text
+Makefile text

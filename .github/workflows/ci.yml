@@ -1,0 +1,73 @@
+# -----------------------------------------------------------------------------
+# Project : iCE40 KWS Accelerator
+# File    : ci.yml
+# Purpose : Full continuous integration: lint, complete Verilator regression
+#           (bit-accurate against the C reference model), FPGA implementation
+#           through bitstream with timing sign-off, and host application build.
+# -----------------------------------------------------------------------------
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    name: Verilator lint (-Wall)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: YosysHQ/setup-oss-cad-suite@v3
+      - run: make lint
+
+  regression:
+    name: Simulation regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: YosysHQ/setup-oss-cad-suite@v3
+      - run: make sim
+      - name: Archive waveforms on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sim-artifacts
+          path: sim/out/*.vcd
+          if-no-files-found: ignore
+
+  implementation:
+    name: Synthesis + PnR + timing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: YosysHQ/setup-oss-cad-suite@v3
+      - run: make bit time
+      - name: Timing sign-off summary
+        run: |
+          grep "Max frequency" build/nextpnr.log | tail -n 2
+          grep "Total path delay" build/icetime.rpt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bitstream
+          path: |
+            build/kws.bin
+            build/nextpnr_report.json
+            build/icetime.rpt
+
+  host:
+    name: Host application
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make host
+      - run: ./host/build/kws_host --help
+
+  weights:
+    name: Weight generation is reproducible
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Regenerate and diff against checked-in artifacts
+        run: |
+          python3 model/gen_weights.py --out /tmp/w
+          diff -r -q /tmp/w weights

@@ -16,7 +16,7 @@
 //    signed product fits in 40 bits and maps onto SB_MAC16 DSPs under
 //    'synth_ice40 -dsp'.
 //  * Fully combinational: at 12 MHz (83 ns budget) the multiply+shift+sat
-//    chain closes with wide margin (see docs/timing.md). For higher clocks,
+//    chain closes with wide margin (see docs/performance.md). For higher clocks,
 //    register the product - the callers already treat requantization as a
 //    separate FSM state, so an added cycle is a localized change.
 // -----------------------------------------------------------------------------

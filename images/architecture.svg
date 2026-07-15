@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 560" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#546e7a"/>
+    </marker>
+  </defs>
+  <style>
+    .box   { fill:#eceff1; stroke:#546e7a; stroke-width:1.5; rx:6; }
+    .mem   { fill:#e3f2fd; stroke:#1e88e5; stroke-width:1.5; }
+    .eng   { fill:#e8f5e9; stroke:#43a047; stroke-width:1.5; }
+    .ctl   { fill:#fff3e0; stroke:#fb8c00; stroke-width:1.5; }
+    .host  { fill:#f3e5f5; stroke:#8e24aa; stroke-width:1.5; }
+    .lbl   { font-size:13px; fill:#263238; }
+    .sub   { font-size:10px; fill:#607d8b; }
+    .ttl   { font-size:15px; font-weight:600; fill:#263238; }
+    .wire  { stroke:#546e7a; stroke-width:1.6; fill:none; marker-end:url(#arr); }
+  </style>
+
+  <text x="20" y="28" class="ttl">iCE40 KWS Accelerator — dataflow</text>
+  <text x="20" y="46" class="sub">host: audio + MFCC only · FPGA: all computation · UART 115200, binary packets, CRC16</text>
+
+  <!-- Host -->
+  <rect x="20" y="70" width="150" height="120" class="host" rx="8"/>
+  <text x="35" y="94" class="lbl" font-weight="600">Host PC (C)</text>
+  <text x="35" y="114" class="sub">mic capture 16 kHz</text>
+  <text x="35" y="130" class="sub">MFCC 40 × INT8</text>
+  <text x="35" y="146" class="sub">normalize + quantize</text>
+  <text x="35" y="162" class="sub">packets @ 100 fps</text>
+  <text x="35" y="178" class="sub">ref-model cross-check</text>
+
+  <!-- UART links -->
+  <path class="wire" d="M170 105 H 230"/>
+  <text x="176" y="99" class="sub">features</text>
+  <path class="wire" d="M230 165 H 170"/>
+  <text x="176" y="185" class="sub">events / responses</text>
+
+  <!-- FPGA boundary -->
+  <rect x="230" y="60" width="730" height="480" fill="none" stroke="#90a4ae" stroke-width="2" stroke-dasharray="7 5" rx="10"/>
+  <text x="245" y="82" class="sub" font-weight="600">iCE40UP5K — kws_core · 4951/5280 LC · 19/30 EBR · 7/8 DSP · 13.2 MHz</text>
+
+  <!-- RX path -->
+  <rect x="250" y="95" width="90" height="40" class="box" rx="6"/>
+  <text x="262" y="119" class="lbl">uart_rx</text>
+  <rect x="360" y="95" width="90" height="40" class="mem" rx="6"/>
+  <text x="371" y="113" class="lbl">rx_fifo</text>
+  <text x="371" y="127" class="sub">256 B EBR</text>
+  <rect x="470" y="95" width="120" height="40" class="box" rx="6"/>
+  <text x="480" y="113" class="lbl">packet_decoder</text>
+  <text x="480" y="127" class="sub">CRC16 · resync</text>
+
+  <path class="wire" d="M340 115 H 360"/>
+  <path class="wire" d="M450 115 H 470"/>
+
+  <!-- feature buffer -->
+  <rect x="470" y="170" width="120" height="52" class="mem" rx="6"/>
+  <text x="480" y="190" class="lbl">feature_buffer</text>
+  <text x="480" y="204" class="sub">64×40 INT8, EBR</text>
+  <text x="480" y="216" class="sub">speculative + commit</text>
+  <path class="wire" d="M530 135 V 170"/>
+  <text x="538" y="156" class="sub">CRC-gated commit</text>
+
+  <!-- scheduler -->
+  <rect x="470" y="252" width="120" height="40" class="ctl" rx="6"/>
+  <text x="479" y="270" class="lbl">window_scheduler</text>
+  <text x="479" y="284" class="sub">32-frame / stride 8</text>
+  <path class="wire" d="M530 222 V 252"/>
+
+  <!-- compute chain -->
+  <rect x="250" y="330" width="150" height="60" class="eng" rx="6"/>
+  <text x="262" y="350" class="lbl">conv1d_engine</text>
+  <text x="262" y="364" class="sub">P×MAC INT8→INT24</text>
+  <text x="262" y="378" class="sub">requant + ReLU</text>
+  <path class="wire" d="M470 280 H 325 V 330"/>
+  <text x="335" y="308" class="sub">issue window</text>
+
+  <rect x="430" y="330" width="120" height="60" class="eng" rx="6"/>
+  <text x="443" y="352" class="lbl">pooling_engine</text>
+  <text x="443" y="368" class="sub">max / avg ÷2</text>
+  <path class="wire" d="M400 360 H 430"/>
+  <text x="401" y="352" class="sub">EBR</text>
+
+  <rect x="580" y="330" width="120" height="60" class="eng" rx="6"/>
+  <text x="595" y="352" class="lbl">classifier</text>
+  <text x="595" y="368" class="sub">dense 120→4 + argmax</text>
+  <path class="wire" d="M550 360 H 580"/>
+  <text x="551" y="352" class="sub">EBR</text>
+
+  <rect x="730" y="330" width="130" height="60" class="eng" rx="6"/>
+  <text x="741" y="348" class="lbl">temporal_smoothing</text>
+  <text x="741" y="362" class="sub">avg · vote · consec</text>
+  <text x="741" y="376" class="sub">debounce</text>
+  <path class="wire" d="M700 360 H 730"/>
+
+  <!-- weights -->
+  <rect x="250" y="430" width="150" height="44" class="mem" rx="6"/>
+  <text x="260" y="448" class="lbl">kernel/weight/bias ROMs</text>
+  <text x="260" y="463" class="sub">.mem images, banked ×P</text>
+  <path class="wire" d="M325 430 V 390"/>
+
+  <!-- event path -->
+  <rect x="730" y="430" width="130" height="44" class="ctl" rx="6"/>
+  <text x="742" y="448" class="lbl">keyword_detector</text>
+  <text x="742" y="463" class="sub">class·conf·votes·latency</text>
+  <path class="wire" d="M795 390 V 430"/>
+
+  <!-- control plane -->
+  <rect x="650" y="95" width="130" height="52" class="ctl" rx="6"/>
+  <text x="663" y="115" class="lbl">register_file</text>
+  <text x="663" y="129" class="sub">commands · CSR · rsp</text>
+  <path class="wire" d="M590 115 H 650"/>
+
+  <rect x="650" y="170" width="130" height="52" class="ctl" rx="6"/>
+  <text x="660" y="190" class="lbl">statistics_counters</text>
+  <text x="660" y="204" class="sub">16×u32 + EBR snapshot</text>
+  <path class="wire" d="M715 147 V 170"/>
+
+  <!-- encoder / tx -->
+  <rect x="810" y="95" width="130" height="52" class="box" rx="6"/>
+  <text x="822" y="115" class="lbl">packet_encoder</text>
+  <text x="822" y="129" class="sub">arbiter: evt &gt; rsp</text>
+  <path class="wire" d="M780 121 H 810"/>
+  <path class="wire" d="M860 147 V 200"/>
+
+  <rect x="810" y="200" width="130" height="40" class="mem" rx="6"/>
+  <text x="826" y="218" class="lbl">tx_fifo · uart_tx</text>
+  <text x="826" y="232" class="sub">128 B EBR</text>
+  <path class="wire" d="M860 430 C 900 420 935 300 872 240"/>
+  <path class="wire" d="M810 220 C 400 250 260 220 232 168"/>
+
+  <!-- irq -->
+  <rect x="650" y="480" width="180" height="40" class="ctl" rx="6"/>
+  <text x="662" y="498" class="lbl">interrupt_controller</text>
+  <text x="662" y="512" class="sub">IRQ pin · LED stretch</text>
+</svg>
