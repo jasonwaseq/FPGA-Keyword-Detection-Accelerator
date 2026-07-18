@@ -49,12 +49,16 @@ package kws_pkg;
   localparam int unsigned PARALLEL_OUT_CH = 2;
 
   // ---------------------------------------------------------------------------
-  // Temporal smoothing defaults (runtime-loadable via register file)
+  // Temporal smoothing defaults ("smoothing defaults" - keep synchronized with
+  // host/src/ref_model.c kws_smooth_init and model/kws_quant.py
+  // SMOOTH_DEFAULTS). Operating point selected by training/tune_detect.py +
+  // eval_stream.py on held-out Speech Commands streams: depth 4 matches the
+  // ~3-4 windows a short spoken keyword fully covers at stride 8.
   // ---------------------------------------------------------------------------
-  localparam int unsigned SMOOTH_DEPTH   = 8;      // history length (2**n)
-  localparam logic signed [7:0] CONF_THRESH = 8'sd40; // smoothed score threshold
-  localparam int unsigned VOTE_MIN       = 5;      // majority votes required
-  localparam int unsigned MIN_CONSEC     = 2;      // consecutive candidates
+  localparam int unsigned SMOOTH_DEPTH   = 4;      // history length (2**n)
+  localparam logic signed [7:0] CONF_THRESH = 8'sd25; // smoothed score threshold
+  localparam int unsigned VOTE_MIN       = 2;      // majority votes required
+  localparam int unsigned MIN_CONSEC     = 1;      // consecutive candidates
   localparam int unsigned DEBOUNCE_INFER = 12;     // refractory inferences
   localparam logic [NUM_CLASSES-1:0] TARGET_MASK = 4'b1100; // classes 2,3 trigger
 

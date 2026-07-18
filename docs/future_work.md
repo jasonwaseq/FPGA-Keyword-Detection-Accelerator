@@ -11,7 +11,7 @@ Ordered roughly by value per effort.
   received events).
 
 ## Model capacity
-* **Second conv layer / more channels.** LC headroom is thin (93 %) but EBR
+* **Second conv layer / more channels.** LC headroom is modest (87 %) but EBR
   (11 free) and SPRAM (4 × 32 KB untouched) are not: weights for a much
   larger model fit; the constraint is control logic. A microcoded layer
   sequencer (one engine, layer descriptors in ROM) would trade the

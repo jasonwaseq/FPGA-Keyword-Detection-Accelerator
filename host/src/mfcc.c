@@ -96,10 +96,21 @@ void kws_mfcc_init(kws_mfcc_t *m, const kws_mfcc_cfg_t *cfg)
     }
 
     for (int i = 0; i < KWS_MFCC_N_MELS; i++) { m->mean[i] = 0.0f; m->var[i] = 1.0f; }
+    m->frozen = 0;
 }
 
-void kws_mfcc_frame(kws_mfcc_t *m, const int16_t *samples,
-                    int8_t out[KWS_MFCC_N_MELS])
+void kws_mfcc_set_stats(kws_mfcc_t *m, const float *mean, const float *std,
+                        int frozen)
+{
+    for (int i = 0; i < KWS_MFCC_N_MELS; i++) {
+        m->mean[i] = mean[i];
+        m->var[i]  = std[i] * std[i];
+    }
+    m->frozen = frozen;
+}
+
+void kws_mfcc_frame_f(kws_mfcc_t *m, const int16_t *samples,
+                      float coef[KWS_MFCC_N_MELS])
 {
     double re[KWS_MFCC_FFT_LEN], im[KWS_MFCC_FFT_LEN];
 
@@ -137,20 +148,29 @@ void kws_mfcc_frame(kws_mfcc_t *m, const int16_t *samples,
         logmel[f] = log(e + 1e-10);
     }
 
-    float coef[KWS_MFCC_N_MELS];
     for (int k = 0; k < KWS_MFCC_N_MELS; k++) {
         double c = 0.0;
         for (int n = 0; n < KWS_MFCC_N_MELS; n++) c += m->dct[k][n] * logmel[n];
         coef[k] = (float)c;
     }
+}
 
-    /* Running normalization (EMA of mean and variance) + INT8 quantization */
+void kws_mfcc_frame(kws_mfcc_t *m, const int16_t *samples,
+                    int8_t out[KWS_MFCC_N_MELS])
+{
+    float coef[KWS_MFCC_N_MELS];
+    kws_mfcc_frame_f(m, samples, coef);
+
+    /* Normalization + INT8 quantization. Frozen mode uses the corpus
+     * statistics installed via kws_mfcc_set_stats (trained deployments);
+     * otherwise a running EMA adapts mean and variance online. */
     float a = m->cfg.norm_alpha;
     for (int k = 0; k < KWS_MFCC_N_MELS; k++) {
-        float d = coef[k] - m->mean[k];
-        m->mean[k] = a * m->mean[k] + (1.0f - a) * coef[k];
-        m->var[k]  = a * m->var[k]  + (1.0f - a) * d * d;
-
+        if (!m->frozen) {
+            float d = coef[k] - m->mean[k];
+            m->mean[k] = a * m->mean[k] + (1.0f - a) * coef[k];
+            m->var[k]  = a * m->var[k]  + (1.0f - a) * d * d;
+        }
         float std = sqrtf(m->var[k] + 1e-6f);
         float q   = (coef[k] - m->mean[k]) / std * m->cfg.quant_scale;
         long  qi  = lroundf(q);

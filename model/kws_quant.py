@@ -141,14 +141,18 @@ def _pick_m_s(max_acc: int, target: int):
     return m, s
 
 
-def calibrate(conv_w, conv_b, dense_w, dense_b, rng, n_windows=64):
-    """Derive requant parameters from random calibration windows.
+def calibrate(conv_w, conv_b, dense_w, dense_b, rng, n_windows=64,
+              windows=None):
+    """Derive requant parameters from calibration windows.
 
-    rng: random.Random instance (deterministic calibration).
+    windows: optional list of real INT8 feature windows
+             [n][WINDOW_LEN][NUM_MFCC] (trained exports pass real data);
+             falls back to rng-generated uniform windows (bring-up weights).
     Returns the complete model dict.
     """
-    windows = [[[rng.randint(-64, 63) for _ in range(NUM_MFCC)]
-                for _ in range(WINDOW_LEN)] for _ in range(n_windows)]
+    if windows is None:
+        windows = [[[rng.randint(-64, 63) for _ in range(NUM_MFCC)]
+                    for _ in range(WINDOW_LEN)] for _ in range(n_windows)]
 
     # Pass 1: convolution accumulator range (requant params irrelevant here).
     max_conv = 1
@@ -178,6 +182,98 @@ def calibrate(conv_w, conv_b, dense_w, dense_b, rng, n_windows=64):
 
 
 # ----------------------------------------------------------------------------
+# Temporal smoothing simulator (mirror of rtl/temporal_smoothing.sv and
+# ref_model.c kws_smooth_step) - used to validate self-test streams and to
+# evaluate detection behaviour offline.
+# ----------------------------------------------------------------------------
+# smoothing defaults - keep synchronized with rtl/kws_pkg.sv and
+# host/src/ref_model.c (tuned operating point, see training/tune_detect.py)
+SMOOTH_DEPTH = 4
+SMOOTH_DEFAULTS = dict(thresh=25, vote_min=2, min_consec=1, debounce=12,
+                       target_mask=0x0C, enable=1)
+
+
+class SmoothSim:
+    """Bit-exact Python mirror of the hardware decision layer.
+
+    depth overrides SMOOTH_DEPTH for design-space exploration; the shipped
+    configuration must match kws_pkg::SMOOTH_DEPTH / KWS_SMOOTH_DEPTH."""
+
+    def __init__(self, depth=None, **cfg):
+        self.depth = depth or SMOOTH_DEPTH
+        self.cfg = dict(SMOOTH_DEFAULTS, **cfg)
+        self.hist = [[0] * NUM_CLASSES for _ in range(self.depth)]
+        self.sums = [0] * NUM_CLASSES
+        self.win_hist = [0] * self.depth
+        self.head = self.whead = self.fill = 0
+        self.consec = 0
+        self.last_cand = -1
+        self.debounce = 0
+
+    def step(self, logits, winner):
+        for c in range(NUM_CLASSES):
+            self.sums[c] += logits[c] - self.hist[self.head][c]
+            self.hist[self.head][c] = logits[c]
+        self.head = (self.head + 1) % self.depth
+        self.win_hist[self.whead] = winner
+        self.whead = (self.whead + 1) % self.depth
+        if self.fill < self.depth:
+            self.fill += 1
+
+        sh = self.depth.bit_length() - 1
+        avg = [self.sums[c] >> sh for c in range(NUM_CLASSES)]
+        sm_idx = avg.index(max(avg))        # lowest-index tie-break
+        sm_val = avg[sm_idx]
+        votes = sum(1 for d in range(self.fill) if self.win_hist[d] == sm_idx)
+
+        c = self.cfg
+        cand = (c["enable"] and ((c["target_mask"] >> sm_idx) & 1)
+                and sm_val >= c["thresh"] and votes >= c["vote_min"])
+        if not cand:
+            run = 0
+        elif self.consec != 0 and self.last_cand == sm_idx:
+            run = self.consec if self.consec >= 15 else self.consec + 1
+        else:
+            run = 1
+        fire = cand and self.debounce == 0 and run >= c["min_consec"]
+        if cand:
+            self.last_cand = sm_idx
+        if fire:
+            self.debounce = c["debounce"]
+            self.consec = 0
+            return dict(cls=sm_idx, conf=max(0, sm_val), votes=votes)
+        self.consec = run
+        if self.debounce > 0:
+            self.debounce -= 1
+        return None
+
+
+def stream_events(frames, model, corrupt=(), pool_mode="max", **cfg):
+    """Simulate the full FPGA pipeline over a frame stream (the scheduler's
+    window law included): frames [n][NUM_MFCC] int8, corrupt = indices whose
+    frames are dropped (CRC-rejected). Returns list of event dicts with the
+    commit index of the newest frame in the detecting window."""
+    sim = SmoothSim(**cfg)
+    commits = []
+    events = []
+    for i, fr in enumerate(frames):
+        if i in corrupt:
+            continue
+        commits.append(fr)
+        n = len(commits)
+        if n < WINDOW_LEN or (n - WINDOW_LEN) % 8 != 0:
+            continue
+        win = commits[n - WINDOW_LEN:n]
+        logits = infer_int(win, model, pool_mode)
+        winner = logits.index(max(logits))  # lowest-index tie-break
+        evt = sim.step(logits, winner)
+        if evt:
+            evt["frame_idx"] = i
+            events.append(evt)
+    return events
+
+
+# ----------------------------------------------------------------------------
 # Emission
 # ----------------------------------------------------------------------------
 def _hex8(v: int) -> str:
@@ -188,11 +284,40 @@ def _hex32(v: int) -> str:
     return f"{v & 0xFFFFFFFF:08x}"
 
 
-def emit(model, out_dir, origin: str):
-    """Write all export products into out_dir. origin: provenance string."""
+SELFTEST_FRAMES = 90   # fixed stream length consumed by tb_kws_core / hwtest
+
+
+def emit(model, out_dir, origin: str, feat_stats=None, selftest=None):
+    """Write all export products into out_dir.
+
+    origin     : provenance string.
+    feat_stats : (mean[NUM_MFCC], std[NUM_MFCC], frozen) MFCC normalization
+                 statistics baked into the host front end; None = adaptive
+                 defaults (mean 0, std 1, frozen 0).
+    selftest   : SELFTEST_FRAMES INT8 frames known to trigger >= 1 keyword
+                 event through this model - the weight-agnostic stimulus for
+                 the full-system bench and the hardware acceptance test.
+                 Verified here under both the clean and the corrupted
+                 (frames 12, 55 dropped) streaming patterns.
+    """
     os.makedirs(out_dir, exist_ok=True)
     cw, cb = model["conv_w"], model["conv_b"]
     dw, db = model["dense_w"], model["dense_b"]
+
+    if feat_stats is None:
+        feat_stats = ([0.0] * NUM_MFCC, [1.0] * NUM_MFCC, 0)
+    f_mean, f_std, f_frozen = feat_stats
+
+    if selftest is None:
+        raise ValueError("emit() requires a selftest stream (see gen_weights/"
+                         "train_np for construction)")
+    if len(selftest) != SELFTEST_FRAMES:
+        raise ValueError(f"selftest must be {SELFTEST_FRAMES} frames")
+    for pattern, corrupt in (("clean", ()), ("corrupted", (12, 55))):
+        ev = stream_events(selftest, model, corrupt=corrupt)
+        if not ev:
+            raise ValueError(f"selftest stream fires no event ({pattern} "
+                             "pattern) - pick stronger stimulus")
 
     # conv_weights.mem : index = (oc*CONV_K + k)*NUM_MFCC + ic
     with open(os.path.join(out_dir, "conv_weights.mem"), "w", newline="\n") as f:
@@ -268,7 +393,26 @@ def emit(model, out_dir, origin: str):
 
         f.write("static const int32_t kws_dense_b[KWS_NUM_CLASSES] = { "
                 + ", ".join(str(v) for v in db) + " };\n\n")
+
+        # MFCC normalization statistics (frozen for trained deployments)
+        f.write(f"#define KWS_FEAT_FROZEN {f_frozen}\n")
+        f.write("static const float kws_feat_mean[KWS_NUM_MFCC] = {\n  "
+                + ", ".join(f"{v:.6f}f" for v in f_mean) + "\n};\n")
+        f.write("static const float kws_feat_std[KWS_NUM_MFCC] = {\n  "
+                + ", ".join(f"{v:.6f}f" for v in f_std) + "\n};\n\n")
+
+        f.write(f"#define KWS_SELFTEST_FRAMES {SELFTEST_FRAMES}\n\n")
         f.write("#endif /* KWS_WEIGHTS_H */\n")
+
+    # Self-test stimulus: frame-major hex bytes, loaded at run time by the
+    # full-system bench and the hardware acceptance test.
+    with open(os.path.join(out_dir, "selftest_frames.mem"), "w",
+              newline="\n") as f:
+        f.write(f"// self-test stimulus: {SELFTEST_FRAMES} frames x "
+                f"{NUM_MFCC} int8 ({origin})\n")
+        for fr in selftest:
+            for v in fr:
+                f.write(_hex8(v) + "\n")
 
     with open(os.path.join(out_dir, "model_params.json"), "w", newline="\n") as f:
         json.dump({
@@ -282,5 +426,8 @@ def emit(model, out_dir, origin: str):
             "m_dense": model["m_dense"], "s_dense": model["s_dense"],
             "max_acc_conv": model["max_acc_conv"],
             "max_acc_dense": model["max_acc_dense"],
+            "feat_frozen": f_frozen,
+            "feat_mean": [round(v, 6) for v in f_mean],
+            "feat_std": [round(v, 6) for v in f_std],
         }, f, indent=2)
         f.write("\n")

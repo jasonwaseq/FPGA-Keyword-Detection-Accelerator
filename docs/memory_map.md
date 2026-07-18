@@ -68,12 +68,16 @@ update by constant increments.
 
 No memory-mapped bus in v1 — commands are the register interface:
 
+Smoothing reset values are the tuned operating point from
+`training/tune_detect.py` (see [training.md](training.md)); "smoothing
+defaults" marks the three synchronized definitions.
+
 | Register | Reset value | Access path |
 |---|---|---|
 | stream_en | 0 | START/STOP/RESET commands |
-| cfg_thresh | +40 | parameter default (extension: WRITE_REG) |
-| cfg_vote_min | 5 | parameter default |
-| cfg_min_consec | 2 | parameter default |
+| cfg_thresh | +25 | parameter default (extension: WRITE_REG) |
+| cfg_vote_min | 2 | parameter default |
+| cfg_min_consec | 1 | parameter default |
 | cfg_debounce | 12 inferences | parameter default |
 | cfg_target_mask | 0b1100 | parameter default |
 | cfg_pool_mode | 0 (max) | parameter default |

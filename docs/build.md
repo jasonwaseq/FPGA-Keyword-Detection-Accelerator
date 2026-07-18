@@ -54,11 +54,10 @@ Notes:
 ## Regenerating weights
 
 ```sh
-make weights            # deterministic bring-up set (seeded; CI verifies
-                        # byte-identical regeneration)
-# or, after training (see docs/training.md):
-python training/export_weights.py --ckpt training/runs/kws_best.pt
-make bit host sim       # ROMs are baked at synthesis; the reference model
+make weights-bringup    # UNTRAINED bring-up set - replaces the shipped
+                        # trained artifacts; retrain via docs/training.md
+# full retraining/export pipeline: docs/training.md
+make sim bit host       # ROMs are baked at synthesis; the reference model
                         # and regression pick up the new header automatically
 ```
 

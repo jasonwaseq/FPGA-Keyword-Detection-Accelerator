@@ -37,8 +37,13 @@ pipeline design, scheduling, verification and honest engineering tradeoffs
   timeout, semantic error responses, fault-injection tests (bit flips,
   garbage, oversized lengths, breaks) all the way up through the full-system
   bench.
-* **Fits and closes**: 4951/5280 LC (93 %), 19/30 EBR, 7/8 DSP,
-  13.16 MHz worst-case against the 12 MHz clock — with the area/timing
+* **Real keyword recognition, validated on silicon**: trained on Speech
+  Commands v2 through the deployment feature pipeline, thresholds tuned on
+  held-out streams, and proven on the live board — real spoken "yes"/"no"
+  from the official test split detected over the UART link, every event
+  bit-exact against the reference.
+* **Fits and closes**: 4607/5280 LC (87 %), 19/30 EBR, 7/8 DSP,
+  14.98 MHz worst-case against the 12 MHz clock — with the area/timing
   war stories written up in [docs/performance.md](docs/performance.md).
 
 ## Repository layout
@@ -50,8 +55,9 @@ sim/           regression build system
 host/          C application: mic/WAV/synth capture, MFCC, serial, CLI,
                reference model, statistics, config
 model/         quantization library + deterministic bring-up weight generator
-training/      PyTorch training + INT8 export (offline tooling)
-weights/       checked-in .mem images + generated C header (CI-reproducible)
+training/      NumPy training, threshold tuning, INT8 export (offline tooling)
+weights/       checked-in TRAINED model artifacts (.mem images, C header,
+               self-test stream, provenance JSON)
 constraints/   iCEBreaker pin constraints
 scripts/       synthesis script
 verification/  test plan with requirement traceability
@@ -75,10 +81,13 @@ Toolchain: [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build)
 + GCC + make + Python 3. Windows/MSYS2 works identically — see
 [docs/build.md](docs/build.md).
 
-The shipped weights are a deterministic, fully calibrated bring-up set (the
-repo builds and verifies with zero ML dependencies; CI re-generates them
-byte-identically). For real keyword accuracy, train and export:
-[docs/training.md](docs/training.md).
+The shipped weights are **trained on Google Speech Commands v2** (keywords
+"yes"/"no"; 85 % 4-class INT8 accuracy; provenance in
+`weights/model_params.json`) with features from the exact deployment MFCC
+front end and detection thresholds tuned on held-out streams — validated on
+real hardware end to end: 7/8 held-out spoken keywords detected on the live
+iCEBreaker with every event bit-exact against the reference model. To
+retrain or change keywords: [docs/training.md](docs/training.md).
 
 ## Documentation
 

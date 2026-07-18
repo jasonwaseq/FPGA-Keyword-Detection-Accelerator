@@ -20,11 +20,12 @@ int main(int argc, char **argv)
     Harness<Vtemporal_smoothing> h(argc, argv, "sim/out/tb_smoothing.vcd");
     Rng rng(0x500full);
 
+    // vote_min <= SMOOTH_DEPTH (4): higher values can never be satisfied.
     const Cfg cfgs[] = {
-        { 40, 5, 2, 12, 0x0C, 1 },   // defaults
-        { 20, 3, 1,  4, 0x0C, 1 },   // permissive
-        { 80, 7, 3, 20, 0x08, 1 },   // strict, class 3 only
-        { 40, 5, 2, 12, 0x0C, 0 },   // disabled: must never fire
+        { 25, 2, 1, 12, 0x0C, 1 },   // shipped defaults (tuned operating point)
+        { 15, 2, 1,  4, 0x0C, 1 },   // permissive
+        { 70, 4, 2, 20, 0x08, 1 },   // strict, class 3 only
+        { 25, 2, 1, 12, 0x0C, 0 },   // disabled: must never fire
         {  0, 0, 0,  0, 0x0F, 1 },   // degenerate: everything fires
     };
 

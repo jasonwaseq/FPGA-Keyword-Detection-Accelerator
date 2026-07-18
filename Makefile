@@ -11,7 +11,9 @@
 #   make time       - icetime timing analysis (build/icetime.rpt)
 #   make prog       - flash the iCEBreaker (iceprog)
 #   make host       - build the host application (host/build/kws_host)
-#   make weights    - regenerate the deterministic bring-up weight set
+#   make weights-bringup - regenerate the untrained bring-up weight set
+#                     (WARNING: replaces the trained artifacts in weights/;
+#                      retrain via docs/training.md to restore them)
 #   make all        - lint + sim + bit + host
 #
 # Windows/MSYS2 note: point VERILATOR at verilator_bin.exe and set
@@ -27,7 +29,7 @@ RTL_SRCS := $(RTL_PKG) $(filter-out $(RTL_PKG),$(wildcard rtl/*.sv))
 
 BUILD := build
 
-.PHONY: all lint sim synth pnr bit time prog host weights clean
+.PHONY: all lint sim synth pnr bit time prog host weights-bringup clean
 
 all: lint sim bit host
 
@@ -71,7 +73,7 @@ prog: $(BUILD)/kws.bin
 host:
 	$(MAKE) -C host
 
-weights:
+weights-bringup:
 	$(PYTHON) model/gen_weights.py --out weights
 
 clean:

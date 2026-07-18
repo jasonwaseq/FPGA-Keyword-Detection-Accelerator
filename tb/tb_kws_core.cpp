@@ -96,6 +96,32 @@ static void handle_event(const kws_packet_t &p)
     evt_matched++;
 }
 
+// Self-test stimulus: emitted alongside the weights by model/kws_quant.py and
+// PROVEN (at emit time) to fire >= 1 keyword event through the current model
+// under both the clean and the fault-injection streaming patterns below.
+// This keeps the bench weight-agnostic: retraining regenerates the stimulus.
+static int8_t g_self[KWS_SELFTEST_FRAMES][KWS_NUM_MFCC];
+
+static void load_selftest(void)
+{
+    FILE *f = fopen("weights/selftest_frames.mem", "r");
+    if (!f) {
+        printf("FAIL cannot open weights/selftest_frames.mem (run from repo root)\n");
+        exit(1);
+    }
+    char line[128];
+    int n = 0;
+    while (n < KWS_SELFTEST_FRAMES * KWS_NUM_MFCC && fgets(line, sizeof(line), f)) {
+        if (line[0] == '/' || line[0] == '\n' || line[0] == '\r') continue;
+        ((int8_t *)g_self)[n++] = (int8_t)strtol(line, nullptr, 16);
+    }
+    fclose(f);
+    if (n != KWS_SELFTEST_FRAMES * KWS_NUM_MFCC) {
+        printf("FAIL selftest_frames.mem short: %d bytes\n", n);
+        exit(1);
+    }
+}
+
 // advance simulation, driving/monitoring the UART and collecting packets
 static bool     g_debug = false;
 static uint64_t g_txd_edges = 0;
@@ -192,7 +218,7 @@ int main(int argc, char **argv)
     H = &h;
     for (int i = 1; i < argc; i++)
         if (!strcmp(argv[i], "+debug")) g_debug = true;
-    Rng rng(0xC0DEC0FEull);
+    load_selftest();
     kws_parser_init(&parser);
     kws_smooth_init(&ref.smooth, 0);
 
@@ -235,23 +261,15 @@ int main(int argc, char **argv)
         CHECK(v.payload[11] == 12,              "clk MHz mismatch");
     }
 
-    // --- 3. START + stream 90 frames (bursts + 2 corrupted packets) -------------
+    // --- 3. START + stream the self-test frames (+ 2 corrupted packets) ---------
     send_cmd_expect_ack(KWS_PKT_CMD_START_STREAM);
     ref.reset();
 
     unsigned corrupted = 0;
-    for (uint32_t fn = 0; fn < 90; fn++) {
-        int8_t feat[KWS_NUM_MFCC];
-        bool burst = (fn >= 30 && fn < 70);
-        for (int ic = 0; ic < KWS_NUM_MFCC; ic++) {
-            int v = (int)rng.u32(0, 24) - 12;
-            if (burst)
-                v += (int)lround(48.0 * cos(2.0 * M_PI * ic / KWS_NUM_MFCC));
-            feat[ic] = (int8_t)std::max(-128, std::min(127, v));
-        }
+    for (uint32_t fn = 0; fn < KWS_SELFTEST_FRAMES; fn++) {
         bool corrupt = (fn == 12 || fn == 55);
         if (corrupt) corrupted++;
-        send_feature(feat, fn, corrupt, true);
+        send_feature(g_self[fn], fn, corrupt, true);
     }
     step(60000);   // drain in-flight inference + events
 
@@ -264,8 +282,8 @@ int main(int argc, char **argv)
     {
         uint32_t v[KWS_STAT_NUM];
         read_stats(v);
-        CHECK(v[KWS_STAT_FRAMES_RX] == 90 - corrupted,
-              "frames_rx %u != %u", v[KWS_STAT_FRAMES_RX], 90 - corrupted);
+        CHECK(v[KWS_STAT_FRAMES_RX] == KWS_SELFTEST_FRAMES - corrupted,
+              "frames_rx %u != %u", v[KWS_STAT_FRAMES_RX], KWS_SELFTEST_FRAMES - corrupted);
         CHECK(v[KWS_STAT_CRC_ERRORS] == corrupted,
               "crc_errors %u != %u", v[KWS_STAT_CRC_ERRORS], corrupted);
         CHECK(v[KWS_STAT_INFERENCES] == ref.inferences,
@@ -293,7 +311,7 @@ int main(int argc, char **argv)
         read_stats(v);
         CHECK(v[KWS_STAT_FRAMES_DROPPED] == 1,
               "frames_dropped %u != 1 after STOP", v[KWS_STAT_FRAMES_DROPPED]);
-        CHECK(v[KWS_STAT_FRAMES_RX] == 90 - corrupted,
+        CHECK(v[KWS_STAT_FRAMES_RX] == KWS_SELFTEST_FRAMES - corrupted,
               "frames_rx changed after STOP");
     }
 
@@ -341,16 +359,8 @@ int main(int argc, char **argv)
     send_cmd_expect_ack(KWS_PKT_CMD_START_STREAM);
     ref.reset();
     unsigned evt_before = evt_matched;
-    // 80 frames -> 7 inference windows: enough to satisfy the 5-of-8 vote
-    // requirement and fire at least one event on burst stimulus.
-    for (uint32_t fn = 2000; fn < 2080; fn++) {
-        int8_t feat[KWS_NUM_MFCC];
-        for (int ic = 0; ic < KWS_NUM_MFCC; ic++) {
-            int v = (int)rng.u32(0, 16) - 8
-                  + (int)lround(48.0 * cos(2.0 * M_PI * ic / KWS_NUM_MFCC));
-            feat[ic] = (int8_t)std::max(-128, std::min(127, v));
-        }
-        send_feature(feat, fn, false, true);
+    for (uint32_t fn = 2000; fn < 2000 + KWS_SELFTEST_FRAMES; fn++) {
+        send_feature(g_self[fn - 2000], fn, false, true);
     }
     step(60000);
     CHECK(ref.events.empty(), "session 2: reference events missing");

@@ -65,7 +65,7 @@ SOF. An inter-byte timeout (100 ms) also returns the parser to hunt mode.
 |---|---|
 | 0 | class id |
 | 1 | confidence (smoothed winner score, 0..127) |
-| 2 | votes (winner count in the 8-deep history) |
+| 2 | votes (winner count in the SMOOTH_DEPTH-deep history, default 4) |
 | 3 | reserved (0) |
 | 4..7 | u32 latency in clock cycles, window issue → decision (÷ clk MHz for µs) |
 

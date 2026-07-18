@@ -1,11 +1,11 @@
-// conv bias int32 [8], then M, S (gen_weights.py seed=20260712)
-00000a9a
-ffffff79
-00000490
-000007a3
-000008c3
-fffffddb
-0000041f
-000000c0
-00005205
+// conv bias int32 [8], then M, S (train_np.py speech_commands_v2 float=0.8461 int8=0.8538 seed=1)
+ffffffe0
+ffffffd3
+ffffff4c
+ffffff0c
+ffffff59
+ffffff60
+ffffffab
+00000060
+000054bb
 00000016

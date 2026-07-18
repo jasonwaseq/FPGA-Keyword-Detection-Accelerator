@@ -50,7 +50,7 @@ processes forever and speaks only when it detects a keyword.
 | Temporal pool (max/avg) | /2 → 15×8 | INT8 |
 | Dense | 120 → 4 logits | INT8×INT8 → INT24 acc |
 | Requant | 4 | same rescale, no ReLU |
-| Smoothing | 8-deep history | moving avg + majority vote |
+| Smoothing | 4-deep history | moving avg + majority vote |
 
 Windows overlap: stride is 8 frames (80 ms), so each frame participates in
 four windows. All geometry is parameterized (`rtl/kws_pkg.sv`) and echoed at
@@ -63,7 +63,7 @@ agree.
 One inference costs ~15.4 k cycles (P=2) against an 80 ms (960 k-cycle)
 stride budget: **1.6 % utilization**. The UART is the real bottleneck. A PLL
 would buy nothing, cost a hard-macro dependency and add a timing variable;
-the design closes at 13.16 MHz worst-case as-is. `CLK_HZ` is a parameter if
+the design closes at 14.98 MHz worst-case as-is. `CLK_HZ` is a parameter if
 a faster link ever demands it.
 
 ### Feature buffer — commit pointers instead of double buffering
@@ -122,7 +122,7 @@ register) was evaluated and rejected: both consumers are paced by the
 `READ_STATS` copies the 16-counter bank into a snapshot RAM one word per
 cycle (per-word atomic, ≤16-cycle skew ≈ 1.3 µs, invisible next to the
 5.6 ms wire time). This replaced a 512-FF shadow bank — the change that
-brought the design from 105 % to 93 % LC utilization.
+brought the design from 105 % to under 90 % LC utilization.
 
 ### Requantization — TFLite-Micro style fixed-point rescale
 `y = sat8((acc·M + 2^(S−1)) ≫ S)` with M < 2^15, S ∈ [1,31], per layer, read

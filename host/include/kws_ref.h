@@ -50,7 +50,8 @@ void kws_ref_infer(const int8_t feat[KWS_WINDOW_LEN][KWS_NUM_MFCC],
 
 /* Temporal smoothing (mirror of rtl/temporal_smoothing.sv) -----------------*/
 
-#define KWS_SMOOTH_DEPTH 8   /* must match kws_pkg::SMOOTH_DEPTH */
+#define KWS_SMOOTH_DEPTH 4   /* smoothing defaults: must match
+                              * kws_pkg::SMOOTH_DEPTH and kws_quant.py */
 
 typedef struct {
     int8_t  thresh;        /* smoothed-score threshold             */
@@ -76,8 +77,8 @@ typedef struct {
     uint8_t votes;
 } kws_ref_event_t;
 
-/* Default configuration = kws_pkg defaults (thresh 40, votes 5, consec 2,
- * debounce 12, mask 0b1100, enabled). */
+/* Default configuration = kws_pkg defaults (thresh 25, votes 2, consec 1,
+ * debounce 12, mask 0b1100, enabled - the tuned operating point). */
 void kws_smooth_init(kws_smooth_t *s, const kws_smooth_cfg_t *cfg /*or NULL*/);
 
 /* Fold one inference result; returns 1 and fills evt on detection. */

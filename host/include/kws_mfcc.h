@@ -37,13 +37,29 @@ typedef struct {
     float window[KWS_MFCC_FRAME_LEN];                    /* Hamming        */
     float mel_w[KWS_MFCC_N_MELS][KWS_MFCC_N_BINS];       /* filterbank     */
     float dct[KWS_MFCC_N_MELS][KWS_MFCC_N_MELS];         /* DCT-II matrix  */
-    float mean[KWS_MFCC_N_MELS], var[KWS_MFCC_N_MELS];   /* running stats  */
+    float mean[KWS_MFCC_N_MELS], var[KWS_MFCC_N_MELS];   /* norm stats     */
+    int   frozen;                                        /* stats fixed    */
     float preemph_state;
     long  frames_done;
 } kws_mfcc_t;
 
 /* cfg may be NULL for defaults. */
 void kws_mfcc_init(kws_mfcc_t *m, const kws_mfcc_cfg_t *cfg);
+
+/* Install per-coefficient normalization statistics. frozen=1 disables the
+ * running EMA adaptation entirely: the trained deployment mode, where the
+ * exact statistics observed over the training corpus are baked into the
+ * weight artifacts (kws_weights.h) so training-time and run-time
+ * normalization are identical by construction. mean/std: KWS_MFCC_N_MELS
+ * values each. */
+void kws_mfcc_set_stats(kws_mfcc_t *m, const float *mean, const float *std,
+                        int frozen);
+
+/* Raw (un-normalized, un-quantized) coefficients for one frame - used by the
+ * training featurizer's corpus-statistics pass. Advances the pre-emphasis
+ * state exactly like kws_mfcc_frame. */
+void kws_mfcc_frame_f(kws_mfcc_t *m, const int16_t *samples,
+                      float coef[KWS_MFCC_N_MELS]);
 
 /* samples: KWS_MFCC_FRAME_LEN mono PCM16 values (the current 25 ms frame).
  * out: KWS_MFCC_N_MELS quantized INT8 coefficients. */

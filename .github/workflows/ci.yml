@@ -63,11 +63,22 @@ jobs:
       - run: ./host/build/kws_host --help
 
   weights:
-    name: Weight generation is reproducible
+    name: Weight tooling is deterministic
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Regenerate and diff against checked-in artifacts
+      # The checked-in weights/ holds the TRAINED deployment set (provenance
+      # in weights/model_params.json). The bring-up generator must remain a
+      # working, deterministic fallback: two runs must agree byte-for-byte.
+      - name: Bring-up generator determinism
         run: |
-          python3 model/gen_weights.py --out /tmp/w
-          diff -r -q /tmp/w weights
+          python3 model/gen_weights.py --out /tmp/w1
+          python3 model/gen_weights.py --out /tmp/w2
+          diff -r -q /tmp/w1 /tmp/w2
+      - name: Checked-in artifact set is complete
+        run: |
+          for f in conv_weights.mem dense_weights.mem conv_bias.mem \
+                   dense_bias.mem selftest_frames.mem kws_weights.h \
+                   model_params.json; do
+            test -f "weights/$f" || { echo "missing weights/$f"; exit 1; }
+          done

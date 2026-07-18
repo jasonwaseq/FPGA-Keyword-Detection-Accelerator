@@ -179,6 +179,15 @@ static int handshake(void)
     return -1;
 
 pinged:;
+    /* Zero the statistics baseline: opening the serial port glitches the TX
+     * line and typically registers a few framing errors before the session. */
+    g_st.cmds_sent++;
+    if (send_packet(KWS_PKT_CMD_RESET, 0, 0, 0) != 0) return -1;
+    if (wait_for(KWS_PKT_RSP_ACK, 500, 0) != 0) {
+        KWS_ERROR("RESET not acknowledged");
+        return -1;
+    }
+
     kws_packet_t ver;
     g_st.cmds_sent++;
     if (send_packet(KWS_PKT_CMD_READ_VERSION, 0, 0, 0) != 0) return -1;
@@ -329,6 +338,9 @@ int main(int argc, char **argv)
     kws_mfcc_cfg_t mcfg = {0.97f, 20.0f, 7600.0f, 0.995f, g_cfg.quant_scale};
     kws_mfcc_t mfcc;
     kws_mfcc_init(&mfcc, &mcfg);
+    /* Normalization statistics ship with the weights; trained exports freeze
+     * them so run-time features match training-time features exactly. */
+    kws_mfcc_set_stats(&mfcc, kws_feat_mean, kws_feat_std, KWS_FEAT_FROZEN);
 
     if (connect_and_start() != 0) { kws_audio_close(audio); return 1; }
 

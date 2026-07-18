@@ -7,6 +7,17 @@ are self-checking Verilator benches under `tb/`, built and executed by
 
 Status column reflects the checked-in regression: **13/13 PASS**.
 
+Hardware execution: the same scenario runs against the real iCEBreaker via
+`host/src/hwtest.c` (build `make -C host hwtest`, run
+`./host/build/kws_hwtest /dev/ttyUSB1`). Result on the reference board with
+the shipped **trained** bitstream: **PASS** — V-08..V-31 re-confirmed on
+silicon, keyword events (from a held-out spoken "yes" self-test stream)
+bit-exact against the reference model, measured inference latency 1.37 ms.
+Additionally, a 41 s continuous stream of held-out test-split utterances
+produced 7/8 correct detections + 1 false accept on the live board,
+matching the offline reference prediction exactly (8/8 event agreement).
+See docs/performance.md, "Hardware validation".
+
 | ID | Requirement | Test(s) | Method | Status |
 |----|-------------|---------|--------|--------|
 | V-01 | CRC16-CCITT-FALSE equivalence HW/SW | tb_crc | 200 random streams vs C | PASS |

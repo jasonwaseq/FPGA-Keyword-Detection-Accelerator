@@ -57,6 +57,22 @@ def synth_weights(seed: int):
     return conv_w, conv_b, dense_w, dense_b, rng
 
 
+def make_selftest(rng):
+    """Deterministic self-test stream: noise with a long class-2 cosine burst
+    (frames 30..69) matching the seeded matched-filter kernels."""
+    import math
+    frames = []
+    for i in range(q.SELFTEST_FRAMES):
+        fr = []
+        for ic in range(q.NUM_MFCC):
+            v = rng.randint(-12, 12)
+            if 30 <= i < 70:
+                v += int(round(48.0 * math.cos(2.0 * math.pi * ic / q.NUM_MFCC)))
+            fr.append(max(-128, min(127, v)))
+        frames.append(fr)
+    return frames
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--out", default="weights", help="output directory")
@@ -65,7 +81,8 @@ def main():
 
     conv_w, conv_b, dense_w, dense_b, rng = synth_weights(args.seed)
     model = q.calibrate(conv_w, conv_b, dense_w, dense_b, rng)
-    q.emit(model, args.out, origin=f"gen_weights.py seed={args.seed}")
+    q.emit(model, args.out, origin=f"gen_weights.py seed={args.seed}",
+           selftest=make_selftest(rng))
 
     print(f"wrote {args.out}/: conv_weights.mem dense_weights.mem "
           f"conv_bias.mem dense_bias.mem kws_weights.h model_params.json")
