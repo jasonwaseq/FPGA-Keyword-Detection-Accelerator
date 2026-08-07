@@ -114,7 +114,12 @@ bring-up with zero ML dependencies; CI checks it stays deterministic.
 
 ## Changing the keyword set
 
-1. Edit `KEYWORDS` in `training/prepare_manifests.py`.
-2. If the class count changes: update `NUM_CLASSES` in `rtl/kws_pkg.sv` and
-   `model/kws_quant.py`, and `labels` in `host/kws.ini`.
+1. Edit `KEYWORDS` in `training/prepare_manifests.py` (and `LABELS` /
+   `NUM_CLASSES` / `CONV_OUT_CH` in `model/kws_quant.py`).
+2. If geometry or class count changes: update `CONV_OUT_CH` /
+   `NUM_CLASSES` / `TARGET_MASK` in `rtl/kws_pkg.sv`, `target_mask`
+   defaults in `host/src/ref_model.c` and `model/kws_quant.py`
+   `SMOOTH_DEFAULTS`, and `labels` in `host/kws.ini`. Keep
+   `CONV_OUT_CH≤8` at P=2 for UP5K LC headroom with 10 classes (16 channels
+  overflowed LC at ~111%; keep EBR ≤30 separately).
 3. Re-run the pipeline above.

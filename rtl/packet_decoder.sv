@@ -249,7 +249,7 @@ module packet_decoder #(
               feat_wr_data_o <= rx_byte;
             end
             pl_idx_q <= pl_idx_q + 1'b1;
-            if (pl_idx_q == IDX_W'(len_q - 1)) state_q <= ST_CRC_L;
+            if (16'(pl_idx_q) == (len_q - 16'd1)) state_q <= ST_CRC_L;
           end
 
           ST_CRC_L: begin

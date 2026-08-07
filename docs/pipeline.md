@@ -37,27 +37,26 @@ mac:                         acc+=j   ...
 ```
 conv:   (8/2) groups × [ 3·2+3 bias/param + 30 rows × (3·40+3+2) ] ≈ 15 236
 pool:   15×8 outputs × (3·2+1)                                     ≈    848
-dense:  5 + 4 × (3 + 120 + 2 + 1)                                  ≈    509
-smooth:                                                                   2
-total:                                                             ≈ 16 595
+dense:  5 + 10 × (3 + 120 + 2 + 1)                                 ≈  1 265
+smooth:                                                                  2
+total:                                                             ≈ 17 351
 ```
 
-Measured in the full-system bench (STAT_LAT_MAX): ~16.6 k cycles = **1.38 ms
-@ 12 MHz**, in agreement.
+≈ **1.45 ms @ 12 MHz**, well under the 80 ms stride.
 
 ## Throughput and utilization
 
 * Feature rate: 100 frames/s → one window every 8 frames = **12.5
   inferences/s**.
-* Compute occupancy: 16.6 k / 960 k cycles = **1.7 %** of the machine.
-* MACs per inference: 28 800 (conv) + 480 (dense) = 29 280 → 366 k MAC/s
-  sustained, headroom ≈ 58× at this clock with P=2 (bounded by the feature
+* Compute occupancy: 17.4 k / 960 k cycles ≈ **1.8 %** of the machine.
+* MACs per inference: 28 800 (conv) + 1 200 (dense) = 30 000 → 375 k MAC/s
+  sustained, headroom ≈ 55× at this clock with P=2 (bounded by the feature
   link, not the datapath).
 * UART RX occupancy: 5 700 B/s of 11 520 B/s = 49 %.
 
 The design never stalls end-to-end: the RX FIFO absorbs a full packet while
 the decoder streams at 1 byte/cycle (104× faster than the line), and window
-overrun would require inference to exceed the 80 ms stride — margin 58×.
+overrun would require inference to exceed the 80 ms stride — margin ~55×.
 `windows_drop` and `fifo_overflows` counters prove this in live statistics.
 
 ## Latency budget (keyword spoken → host log line)
@@ -68,7 +67,7 @@ overrun would require inference to exceed the 80 ms stride — margin 58×.
 | Smoothing (min_consec=2 windows × 80 ms stride) | 160 ms (algorithmic) |
 | Host MFCC + packetization | < 1 ms |
 | UART frame transfer (57 B) | 5 ms |
-| FPGA inference + decision | 1.4 ms |
+| FPGA inference + decision | ~1.5 ms |
 | Event packet (23 B) | 2 ms |
 | **Hardware round-trip share** | **< 9 ms** |
 

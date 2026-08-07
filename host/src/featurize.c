@@ -15,7 +15,7 @@
  *                   32-frame training window (+/-4-frame jitter crops with
  *                   --jitter).
  *   --mix-dir D     augmentation: mix a random background-noise crop from
- *                   directory D into speech clips (labels 1..3) at a random
+ *                   directory D into speech clips (labels != 0) at a random
  *                   5..20 dB SNR with probability 0.7 (deterministic per
  *                   clip). Use for the training emission only; the stats
  *                   pass and eval sets stay clean.

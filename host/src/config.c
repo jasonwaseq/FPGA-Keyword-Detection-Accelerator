@@ -25,7 +25,7 @@ void kws_config_default(kws_config_t *c)
     c->check            = 1;
     c->verbose          = 0;
     c->quant_scale      = 20.0f;
-    strcpy(c->labels, "silence,unknown,yes,no");
+    strcpy(c->labels, "silence,unknown,yes,no,up,down,left,right,on,off");
 }
 
 static void trim(char *s)

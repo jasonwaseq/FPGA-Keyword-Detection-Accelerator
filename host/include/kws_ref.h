@@ -58,7 +58,7 @@ typedef struct {
     uint8_t vote_min;      /* majority votes required              */
     uint8_t min_consec;    /* consecutive candidate evaluations    */
     uint8_t debounce;      /* refractory period, in inferences     */
-    uint8_t target_mask;   /* bit c: class c may trigger           */
+    uint16_t target_mask;  /* bit c: class c may trigger (N<=16)  */
     uint8_t enable;
 } kws_smooth_cfg_t;
 
@@ -78,7 +78,8 @@ typedef struct {
 } kws_ref_event_t;
 
 /* Default configuration = kws_pkg defaults (thresh 25, votes 2, consec 1,
- * debounce 12, mask 0b1100, enabled - the tuned operating point). */
+ * debounce 12, mask 0x3FC (classes 2..9), enabled - the tuned operating
+ * point). */
 void kws_smooth_init(kws_smooth_t *s, const kws_smooth_cfg_t *cfg /*or NULL*/);
 
 /* Fold one inference result; returns 1 and fills evt on detection. */

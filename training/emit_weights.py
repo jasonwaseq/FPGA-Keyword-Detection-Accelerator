@@ -41,11 +41,12 @@ def main():
     print("streaming metrics at current smoothing defaults "
           f"({q.SMOOTH_DEFAULTS}):")
     met = stream_metrics(model, fx, fy)
-    for cls in range(4):
+    for cls in range(q.NUM_CLASSES):
         n, fired, none = met[cls]
+        parts = " ".join(f"{LABELS[c][:3]}={fired[c]}"
+                         for c in range(q.NUM_CLASSES))
         print(f"  streams[{LABELS[cls]:8s}] n={n:3d} -> events "
-              f"sil={fired[0]} unk={fired[1]} yes={fired[2]} no={fired[3]} "
-              f"(no event: {none})")
+              f"{parts} (no event: {none})")
 
     stream, picked = pick_selftest(model, fx, fy)
     print(f"selftest stream: held-out test clip #{picked} ('yes')")
