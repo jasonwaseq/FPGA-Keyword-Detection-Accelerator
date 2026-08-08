@@ -218,6 +218,43 @@ def int8_eval(model, x, y, limit=None):
     return acc, conf
 
 
+def dump_misclassified(model, x, y, true_label, pred_label, manifest_path=None,
+                        max_print=50):
+    """Print indices (and source manifest lines) of true_label->pred_label errors.
+
+    manifest_path should be the .txt manifest (e.g. test.txt) that was used
+    to featurize x/y, with lines in the SAME ORDER as records in the .bin
+    file (prepare_manifests.py writes one shuffled-but-fixed order per split,
+    and featurize.c must read it sequentially for this index mapping to hold
+    -- sanity check the first hit against the manifest before trusting this).
+    """
+    true_idx = LABELS.index(true_label)
+    pred_idx = LABELS.index(pred_label)
+    hits = []
+    for i in range(len(x)):
+        logits = q.infer_int(x[i].tolist(), model)
+        pred = int(np.argmax(logits))
+        if y[i] == true_idx and pred == pred_idx:
+            hits.append(i)
+
+    print(f"\n{true_label} -> {pred_label} misclassifications: {len(hits)}")
+    if manifest_path is None:
+        print("record indices:", hits[:max_print])
+        return hits
+
+    with open(manifest_path) as f:
+        lines = [ln.rstrip("\n") for ln in f]
+
+    for i in hits[:max_print]:
+        if i < len(lines):
+            print(f"  idx {i}: {lines[i]}")
+        else:
+            print(f"  idx {i}: <out of manifest range - index mapping is off>")
+    if len(hits) > max_print:
+        print(f"  ... and {len(hits) - max_print} more")
+    return hits
+
+
 def cosine_lr(base_lr, epoch, epochs, min_lr=1e-5):
     """Cosine decay from base_lr -> min_lr over epochs."""
     import math
@@ -268,9 +305,15 @@ def main():
     ap.add_argument("--work", required=True, help="featurizer output dir")
     ap.add_argument("--weights-out", default="weights")
     ap.add_argument("--epochs", type=int, default=100)
+    ap.add_argument("--patience", type=int, default=18,
+                    help="early-stop after this many epochs without val improvement")
     ap.add_argument("--batch", type=int, default=512)
     ap.add_argument("--lr", type=float, default=2e-3)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--dump-confusion", nargs=2, metavar=("TRUE_LABEL", "PRED_LABEL"),
+                    default=None,
+                    help="print manifest lines for this true->pred confusion pair, "
+                         "e.g. --dump-confusion left yes")
     args = ap.parse_args()
     work = os.path.expanduser(args.work)
     rng = np.random.default_rng(args.seed)
@@ -281,12 +324,14 @@ def main():
     print(f"geometry: CONV_OUT_CH={q.CONV_OUT_CH} DENSE_IN={q.DENSE_IN} "
           f"NUM_CLASSES={q.NUM_CLASSES}")
     print(f"train {len(xt)}  val {len(xv)}  test {len(xe)}")
+    print(f"early stopping: patience={args.patience} (max epochs={args.epochs})")
 
     xtf = xt.astype(np.float64)
     xvf = xv.astype(np.float64)
     xef = xe.astype(np.float64)
     net = Net(rng)
-    best_val, best = 0.0, None
+    best_val, best, best_ep = 0.0, None, 0
+    stale = 0
     for ep in range(args.epochs):
         order = rng.permutation(len(xtf))
         lr = cosine_lr(args.lr, ep, args.epochs)
@@ -296,15 +341,29 @@ def main():
             grads = net.backward(xtf[b], yt[b], logits, cache)
             net.adam(grads, lr)
         va = net.accuracy(xvf, yv)
-        print(f"epoch {ep + 1:3d}/{args.epochs}  lr {lr:.5f}  val_acc {va:.4f}")
-        if va > best_val:
+        improved = va > best_val
+        if improved:
             best_val = va
             best = [p.copy() for p in net.params]
+            best_ep = ep + 1
+            stale = 0
+        else:
+            stale += 1
+        mark = " *" if improved else f"  (stale {stale}/{args.patience})"
+        print(f"epoch {ep + 1:3d}/{args.epochs}  lr {lr:.5f}  "
+              f"val_acc {va:.4f}{mark}")
+        if stale >= args.patience:
+            print(f"early stop at epoch {ep + 1}: no val improvement for "
+                  f"{args.patience} epochs (best epoch {best_ep}, "
+                  f"val {best_val:.4f})")
+            break
+
     net.W1, net.b1, net.W2, net.b2 = best
     net.params = [net.W1, net.b1, net.W2, net.b2]
 
     test_acc = net.accuracy(xef, ye)
-    print(f"float: best val {best_val:.4f}  test {test_acc:.4f}")
+    print(f"float: best val {best_val:.4f} @ epoch {best_ep}  "
+          f"test {test_acc:.4f}")
 
     # --- quantize on real calibration windows -------------------------------
     cal_idx = rng.permutation(len(xt))[:500]
@@ -313,10 +372,17 @@ def main():
     print(f"requant: conv M={model['m_conv']} S={model['s_conv']}, "
           f"dense M={model['m_dense']} S={model['s_dense']}")
 
-    int_acc, conf = int8_eval(model, xe, ye)   # full test set (92% gate)
+    int_acc, conf = int8_eval(model, xe, ye)   # full test set (gate metric)
     print(f"int8 (bit-exact) test accuracy: {int_acc:.4f}")
     print(f"confusion (rows=truth {'/'.join(LABELS)}):")
     print(conf)
+
+    # --- optional: dump specific confusion pair for manual audio review ------
+    if args.dump_confusion:
+        true_label, pred_label = args.dump_confusion
+        manifest_path = os.path.join(work, "test.txt")
+        dump_misclassified(model, xe, ye, true_label, pred_label,
+                            manifest_path=manifest_path)
 
     # --- persist the quantized model for tuning + emission --------------------
     # (training is decoupled from smoothing-threshold selection: see
@@ -325,8 +391,11 @@ def main():
     import json
     model_out = dict(model)
     model_out["float_test_acc"] = float(test_acc)
+    model_out["float_val_acc"] = float(best_val)
+    model_out["best_epoch"] = int(best_ep)
     model_out["int8_test_acc"] = float(int_acc)
     model_out["seed"] = args.seed
+    model_out["patience"] = args.patience
     with open(os.path.join(work, "model_int8.json"), "w") as f:
         json.dump(model_out, f)
     np.savez(os.path.join(work, "float_params.npz"),
