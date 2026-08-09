@@ -56,7 +56,7 @@ package kws_pkg;
   // ~3-4 windows a short spoken keyword fully covers at stride 8.
   // ---------------------------------------------------------------------------
   localparam int unsigned SMOOTH_DEPTH   = 4;      // history length (2**n)
-  localparam logic signed [7:0] CONF_THRESH = 8'sd35; // smoothed score threshold
+  localparam logic signed [7:0] CONF_THRESH = 8'sd30; // smoothed score threshold
   localparam int unsigned VOTE_MIN       = 3;      // majority votes required
   localparam int unsigned MIN_CONSEC     = 2;      // consecutive candidates
   localparam int unsigned DEBOUNCE_INFER = 12;     // refractory inferences

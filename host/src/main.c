@@ -285,15 +285,12 @@ static int connect_and_start(void)
     }
 }
 
-/* --- reference model mirror -----------------------------------------------------*/
 static void ref_check(uint32_t frame_num, const int8_t *feat)
 {
     memcpy(g_win[frame_num % KWS_WINDOW_LEN], feat, KWS_NUM_MFCC);
 
-    /* Mirror of the RTL window_scheduler: windows complete at frames
-     * WINDOW_LEN-1, WINDOW_LEN-1+STRIDE, ... (frame numbers are 0-based). */
-    uint32_t n = frame_num + 1;   /* frames sent so far */
-    if (n < KWS_WINDOW_LEN || (n - KWS_WINDOW_LEN) % 8 /* stride */ != 0) return;
+    uint32_t n = frame_num + 1;
+    if (n < KWS_WINDOW_LEN || (n - KWS_WINDOW_LEN) % 8 != 0) return;
 
     int8_t win[KWS_WINDOW_LEN][KWS_NUM_MFCC];
     for (uint32_t t = 0; t < KWS_WINDOW_LEN; t++) {
@@ -305,11 +302,13 @@ static void ref_check(uint32_t frame_num, const int8_t *feat)
     int winner;
     kws_ref_infer(win, logits, &winner, KWS_POOL_MAX);
 
+    /* Debug: show raw per-window winner/logit even when smoothing doesn't
+     * fire, so borderline-but-not-quite-threshold cases are visible. */
+    KWS_DEBUG("  [raw] window@frame=%u winner='%s' logit=%d",
+              frame_num, kws_config_label(&g_cfg, winner), logits[winner]);
+
     kws_ref_event_t evt;
     if (kws_smooth_step(&g_smooth, logits, winner, &evt)) {
-        /* Smoothing state (votes/debounce) is still advanced during warm-up
-         * so it stays correctly synchronized with the hardware's own
-         * smoothing state -- only the *report* is suppressed. */
         if (frame_num < g_warmup_frames) {
             KWS_DEBUG("(suppressed, warm-up) ref '%s' conf=%u votes=%u at frame %u",
                       kws_config_label(&g_cfg, evt.class_id),
@@ -317,7 +316,7 @@ static void ref_check(uint32_t frame_num, const int8_t *feat)
             return;
         }
         g_st.ref_events++;
-        g_st.agree++;   /* provisional; unmatched events reported at exit */
+        g_st.agree++;
         KWS_INFO("    [ref] predicts '%s' conf=%u votes=%u at frame %u",
                  kws_config_label(&g_cfg, evt.class_id),
                  evt.confidence, evt.votes, frame_num);
