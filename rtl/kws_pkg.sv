@@ -57,7 +57,7 @@ package kws_pkg;
   // ---------------------------------------------------------------------------
   localparam int unsigned SMOOTH_DEPTH   = 4;      // history length (2**n)
   localparam logic signed [7:0] CONF_THRESH = 8'sd30; // smoothed score threshold
-  localparam int unsigned VOTE_MIN       = 3;      // majority votes required
+  localparam int unsigned VOTE_MIN       = 2;      // majority votes required
   localparam int unsigned MIN_CONSEC     = 2;      // consecutive candidates
   localparam int unsigned DEBOUNCE_INFER = 12;     // refractory inferences
   // classes 2..9 (yes/no/up/down/left/right/on/off) may trigger events

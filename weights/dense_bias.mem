@@ -1,13 +1,13 @@
-// dense bias int32 [10], then M, S (train_np.py speech_commands_v2 float=0.6907 int8=0.6847 seed=1)
-000000e7
-ffffff16
-ffffff16
-ffffff40
-0000016c
-000000c3
-00000091
-fffffedd
-0000003f
-00000076
-0000493d
+// dense bias int32 [10], then M, S (train_np.py speech_commands_v2 float=0.6686 int8=0.6686 seed=1)
+000001b2
+ffffffa0
+fffffe47
+ffffff87
+000000fd
+0000014e
+ffffffc8
+ffffff8f
+0000004c
+ffffff9c
+00004fbf
 00000014

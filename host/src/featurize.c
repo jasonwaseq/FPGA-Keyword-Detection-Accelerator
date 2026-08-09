@@ -182,6 +182,7 @@ static void mix_noise(int16_t *clip)
 /* Label indices must match model/kws_quant.py LABELS / prepare_manifests.py. */
 #define LBL_DOWN 5
 #define LBL_LEFT 6
+#define LBL_UP   4
 
 static uint32_t g_stretch_rng = 0x53545245u;  /* 'STRE' */
 
@@ -225,7 +226,8 @@ static int maybe_time_stretch(const int16_t *clip, int16_t *out, int label)
 {
     int p_pct;
     if (label == LBL_DOWN || label == LBL_LEFT) p_pct = 70;
-    else if (label >= 2) p_pct = 25;
+    else if (label == LBL_UP)                    p_pct = 35;
+    else if (label >= 2)                          p_pct = 25;
     else return 0;
     if ((int)(stretch_rand() % 100u) >= p_pct) return 0;
 

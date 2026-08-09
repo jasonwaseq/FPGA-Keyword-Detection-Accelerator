@@ -1,4 +1,4 @@
-// self-test stimulus: 90 frames x 40 int8 (train_np.py speech_commands_v2 float=0.6907 int8=0.6847 seed=1)
+// self-test stimulus: 90 frames x 40 int8 (train_np.py speech_commands_v2 float=0.6686 int8=0.6686 seed=1)
 06
 ef
 00
