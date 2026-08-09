@@ -192,7 +192,7 @@ def calibrate(conv_w, conv_b, dense_w, dense_b, rng, n_windows=64,
 # smoothing defaults - keep synchronized with rtl/kws_pkg.sv and
 # host/src/ref_model.c (tuned operating point, see training/tune_detect.py)
 SMOOTH_DEPTH = 4
-SMOOTH_DEFAULTS = dict(thresh=30, vote_min=3, min_consec=2, debounce=12,
+SMOOTH_DEFAULTS = dict(thresh=35, vote_min=3, min_consec=2, debounce=12,
                        target_mask=0x3FC, enable=1)  # bits 2..9
 
 

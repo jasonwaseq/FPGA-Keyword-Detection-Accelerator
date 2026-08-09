@@ -129,7 +129,7 @@ void kws_smooth_init(kws_smooth_t *s, const kws_smooth_cfg_t *cfg)
     } else {
         /* smoothing defaults - keep synchronized with kws_pkg.sv and
          * kws_quant.py SMOOTH_DEFAULTS (tuned operating point) */
-        s->cfg.thresh      = 30;
+        s->cfg.thresh      = 35;
         s->cfg.vote_min    = 3;
         s->cfg.min_consec  = 2;
         s->cfg.debounce    = 12;

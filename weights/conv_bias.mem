@@ -1,11 +1,11 @@
-// conv bias int32 [8], then M, S (train_np.py speech_commands_v2 float=0.6570 int8=0.6528 seed=1)
-fffffd96
-fffffd0a
-ffffff47
-fffffff2
-fffffff9
-ffffff16
-fffffe73
-fffffe87
-00007a23
-00000016
+// conv bias int32 [8], then M, S (train_np.py speech_commands_v2 float=0.6907 int8=0.6847 seed=1)
+ffffff3b
+fffffeb2
+ffffff23
+ffffff93
+ffffffb5
+ffffff91
+ffffff01
+ffffff49
+00004d60
+00000015
