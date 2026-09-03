@@ -4,7 +4,7 @@ prepare_manifests.py - Build featurizer manifests from Google Speech
 Commands v2 using the official validation/testing splits.
 
 Classes: 0=silence (crops of _background_noise_), 1=unknown (all non-target
-words, subsampled), 2=yes, 3=no.
+words, subsampled), 2..=keywords (see KEYWORDS).
 
 Usage:
     python prepare_manifests.py --data ~/kws_data/sc2 --out ~/kws_data/work
@@ -16,7 +16,12 @@ import argparse
 import os
 import random
 
-KEYWORDS = {"yes": 2, "no": 3}
+# Must stay in sync with model/kws_quant.py LABELS / NUM_CLASSES.
+KEYWORDS = {
+    "yes": 2, "no": 3, "up": 4, "down": 5,
+    "left": 6, "right": 7, "on": 8, "off": 9,
+}
+NUM_CLASSES = 2 + len(KEYWORDS)  # silence + unknown + keywords
 UNKNOWN_TRAIN = 8000
 UNKNOWN_EVAL = 1200
 SIL_HOP = 2000          # samples between silence crops (heavy overlap)
@@ -83,13 +88,16 @@ def main():
     split["val"].extend(crops[int(0.8 * n): int(0.9 * n)])
     split["test"].extend(crops[int(0.9 * n):])
 
+    kw_names = [w for w, _ in sorted(KEYWORDS.items(), key=lambda kv: kv[1])]
     for s in ("train", "val", "test"):
         rng.shuffle(split[s])
         with open(os.path.join(out, f"{s}.txt"), "w") as f:
             for e in split[s]:
                 f.write(" ".join(str(x) for x in e) + "\n")
-        counts = [sum(1 for e in split[s] if e[0] == c) for c in range(4)]
-        print(f"{s}: {len(split[s])} clips  (sil/unk/yes/no = {counts})")
+        counts = [sum(1 for e in split[s] if e[0] == c)
+                  for c in range(NUM_CLASSES)]
+        print(f"{s}: {len(split[s])} clips  "
+              f"(sil/unk/{'/'.join(kw_names)} = {counts})")
 
     # Candidate clips for self-test stream selection: held-out test 'yes'
     with open(os.path.join(out, "selftest_yes.txt"), "w") as f:

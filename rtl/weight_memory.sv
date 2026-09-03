@@ -10,7 +10,7 @@
 
 module weight_memory #(
   parameter int unsigned DATA_W      = 8,
-  parameter int unsigned NUM_CLASSES = 4,
+  parameter int unsigned NUM_CLASSES = 10,
   parameter int unsigned IN_LEN      = 120,
   parameter              MEM_FILE    = "weights/dense_weights.mem"
 ) (

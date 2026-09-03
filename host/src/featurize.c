@@ -15,16 +15,27 @@
  *                   32-frame training window (+/-4-frame jitter crops with
  *                   --jitter).
  *   --mix-dir D     augmentation: mix a random background-noise crop from
- *                   directory D into speech clips (labels 1..3) at a random
+ *                   directory D into speech clips (labels != 0) at a random
  *                   5..20 dB SNR with probability 0.7 (deterministic per
  *                   clip). Use for the training emission only; the stats
  *                   pass and eval sets stay clean.
+ *   --stretch       augmentation: ADDS an extra fast-speech record (does not
+ *                   replace the clean one) by resampling a copy of the 1 s
+ *                   clip at a random FAST-only rate in [1.10, 1.15] (speed
+ *                   +10..15%). Only the fast direction is used: it reads
+ *                   more of the source per output sample, so it can only
+ *                   run out of content early (trailing silence pad), never
+ *                   truncate real speech the way a slow/rate<1 stretch
+ *                   would in a fixed-length buffer. Applied with p=0.70 for
+ *                   labels down/left and p=0.25 for other keywords;
+ *                   silence/unknown are never stretched. Training emission
+ *                   only.
  *   --whole         treat each manifest entry as one continuous recording
  *                   (up to 120 s): emit a single record with all its frames.
  *                   Used to featurize long validation streams exactly as the
  *                   live host would.
  *
- * Manifest: one clip per line:  <label 0..3> <wav path> [offset_samples]
+ * Manifest: one clip per line:  <label 0..9> <wav path> [offset_samples]
  * Clips are read as 16 kHz mono PCM16, cropped/zero-padded to 1 s from the
  * optional offset (offsets carve silence examples out of the long
  * _background_noise_ recordings).
@@ -167,6 +178,66 @@ static void mix_noise(int16_t *clip)
     }
 }
 
+/* --- time-stretch (speed) augmentation ----------------------------------------*/
+/* Label indices must match model/kws_quant.py LABELS / prepare_manifests.py. */
+#define LBL_DOWN 5
+#define LBL_LEFT 6
+#define LBL_UP   4
+
+static uint32_t g_stretch_rng = 0x53545245u;  /* 'STRE' */
+
+static uint32_t stretch_rand(void)
+{
+    g_stretch_rng = g_stretch_rng * 1664525u + 1013904223u;
+    return g_stretch_rng;
+}
+
+/* Only the "fast" direction (rate > 1) is lossless in a fixed-length buffer:
+ * it reads MORE of the source per output sample, so it can only run out of
+ * source content near the end (padded with trailing silence), never
+ * truncate real speech. A "slow" direction (rate < 1) would need to fit a
+ * longer sound into the same fixed-length window, which inherently drops
+ * content near the clip boundary -- risky since word placement in these
+ * clips isn't always centered. Dropped for that reason; revisit with a
+ * variable-length buffer if slow-speech coverage turns out to matter. */
+static void time_stretch_inplace(int16_t *clip, double rate)
+{
+    int16_t src[CLIP_SAMPLES];
+    memcpy(src, clip, sizeof(src));
+    for (int i = 0; i < CLIP_SAMPLES; i++) {
+        double pos = (double)i * rate;
+        int i0 = (int)floor(pos);
+        if (i0 >= CLIP_SAMPLES - 1) {
+            clip[i] = 0;   /* past source content: true silence pad */
+        } else {
+            double frac = pos - (double)i0;
+            double v = (1.0 - frac) * (double)src[i0] + frac * (double)src[i0 + 1];
+            clip[i] = (int16_t)(v >= 0 ? v + 0.5 : v - 0.5);
+        }
+    }
+}
+
+/* Writes a stretched COPY into `out`, leaving `clip` untouched, so the
+ * caller can still emit the original clean record separately -- this
+ * augmentation adds records, it never replaces the clean training signal.
+ * p=0.70 for down/left, p=0.25 for other keywords; never silence/unknown.
+ * Returns 1 if a stretched copy was produced, 0 if not selected this call. */
+static int maybe_time_stretch(const int16_t *clip, int16_t *out, int label)
+{
+    int p_pct;
+    if (label == LBL_DOWN || label == LBL_LEFT) p_pct = 70;
+    else if (label == LBL_UP)                    p_pct = 35;
+    else if (label >= 2)                          p_pct = 25;
+    else return 0;
+    if ((int)(stretch_rand() % 100u) >= p_pct) return 0;
+
+    /* Fast-only: [1.10, 1.15], uniform over 51 endpoints. */
+    double rate = 1.10 + (double)(stretch_rand() % 51u) / 1000.0;
+    memcpy(out, clip, CLIP_SAMPLES * sizeof(int16_t));
+    time_stretch_inplace(out, rate);
+    return 1;
+}
+
 /* --- continuous (whole-file) mode ---------------------------------------------*/
 #define WHOLE_MAX_SAMPLES (120 * 16000)
 
@@ -251,11 +322,30 @@ static int best_window(const int8_t q[CLIP_FRAMES][KWS_MFCC_N_MELS])
     return best_s;
 }
 
+/* Emit one energy-centered (or jittered) 32-frame record set from an
+ * already-quantized full-clip feature array. Shared by the clean-clip path
+ * and the stretched-copy path so both use identical windowing logic. */
+static void emit_windowed_records(FILE *of, const int8_t q[CLIP_FRAMES][KWS_MFCC_N_MELS],
+                                   uint8_t lab, int jitter_on, uint32_t *n_records)
+{
+    int s0 = best_window(q);
+    int starts[3] = { s0, s0 - 4, s0 + 4 };
+    int n_crops = jitter_on ? 3 : 1;
+    for (int c = 0; c < n_crops; c++) {
+        int s = starts[c];
+        if (s < 0) s = 0;
+        if (s > CLIP_FRAMES - WIN_FRAMES) s = CLIP_FRAMES - WIN_FRAMES;
+        fwrite(&lab, 1, 1, of);
+        fwrite(q[s], 1, WIN_FRAMES * KWS_MFCC_N_MELS, of);
+        (*n_records)++;
+    }
+}
+
 int main(int argc, char **argv)
 {
     const char *manifest = 0, *out_path = 0, *stats_in = 0, *stats_out = 0;
     const char *mix_dir = 0;
-    int all_frames = 0, jitter = 0, whole = 0;
+    int all_frames = 0, jitter = 0, whole = 0, stretch = 0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--manifest") && i + 1 < argc)   manifest  = argv[++i];
@@ -265,6 +355,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--mix-dir") && i + 1 < argc)   mix_dir   = argv[++i];
         else if (!strcmp(argv[i], "--all-frames"))            all_frames = 1;
         else if (!strcmp(argv[i], "--jitter"))                jitter = 1;
+        else if (!strcmp(argv[i], "--stretch"))               stretch = 1;
         else if (!strcmp(argv[i], "--whole"))                 whole = 1;
         else { fprintf(stderr, "unknown arg '%s'\n", argv[i]); return 2; }
     }
@@ -275,7 +366,8 @@ int main(int argc, char **argv)
     if (!manifest || (!stats_out && !out_path)) {
         fprintf(stderr,
             "usage: kws_featurize --manifest M (--stats-out F | "
-            "--stats-in F --out B [--all-frames] [--jitter])\n");
+            "--stats-in F --out B [--all-frames] [--jitter] [--stretch] "
+            "[--mix-dir D])\n");
         return 2;
     }
 
@@ -316,11 +408,13 @@ int main(int argc, char **argv)
     long long s_n = 0;
 
     static int16_t clip[CLIP_SAMPLES];
+    static int16_t sclip[CLIP_SAMPLES];         /* stretched-copy scratch */
     static float   coefs[CLIP_FRAMES][KWS_MFCC_N_MELS];
     static int8_t  q[CLIP_FRAMES][KWS_MFCC_N_MELS];
+    static int8_t  qs[CLIP_FRAMES][KWS_MFCC_N_MELS];  /* stretched-copy features */
 
     char line[512];
-    long clips = 0, skipped = 0;
+    long clips = 0, skipped = 0, stretched_emitted = 0;
     while (fgets(line, sizeof(line), mf)) {
         int label;
         char path[440];
@@ -352,6 +446,15 @@ int main(int argc, char **argv)
 
         if (wav_read_clip(path, offset, clip) != 0) { skipped++; continue; }
         clips++;
+
+        /* Stretch is sampled from the CLEAN clip (before noise mix), into a
+         * separate scratch buffer -- `clip` itself is never mutated by
+         * this, so the original clean record below is always intact and
+         * unaffected by whether stretching fires. */
+        int did_stretch = stretch
+            ? maybe_time_stretch(clip, sclip, label)
+            : 0;
+
         if (mix_dir && label != 0) mix_noise(clip);   /* speech labels only */
 
         if (stats_out) {
@@ -365,24 +468,27 @@ int main(int argc, char **argv)
             continue;
         }
 
-        clip_frames_q(clip, q);
         uint8_t lab = (uint8_t)label;
+
+        /* clean (or noise-mixed) record: always emitted */
+        clip_frames_q(clip, q);
         if (all_frames) {
             fwrite(&lab, 1, 1, of);
             fwrite(q, 1, CLIP_FRAMES * KWS_MFCC_N_MELS, of);
             n_records++;
         } else {
-            int s0 = best_window(q);
-            int starts[3] = { s0, s0 - 4, s0 + 4 };
-            int n_crops = jitter ? 3 : 1;
-            for (int c = 0; c < n_crops; c++) {
-                int s = starts[c];
-                if (s < 0) s = 0;
-                if (s > CLIP_FRAMES - WIN_FRAMES) s = CLIP_FRAMES - WIN_FRAMES;
-                fwrite(&lab, 1, 1, of);
-                fwrite(q[s], 1, WIN_FRAMES * KWS_MFCC_N_MELS, of);
-                n_records++;
-            }
+            emit_windowed_records(of, q, lab, jitter, &n_records);
+        }
+
+        /* additional fast-speech record: only when stretch fired above,
+         * and only in windowed mode (all-frames/whole streams are used for
+         * exact stream-timing verification and shouldn't get an extra
+         * synthetic-rate record mixed in). ADDS to the dataset, does not
+         * replace the clean record just written. */
+        if (did_stretch && !all_frames) {
+            clip_frames_q(sclip, qs);
+            emit_windowed_records(of, qs, lab, jitter, &n_records);
+            stretched_emitted++;
         }
     }
     fclose(mf);
@@ -405,8 +511,9 @@ int main(int argc, char **argv)
         if (whole) fwrite(&rec_frames, 4, 1, of);   /* patch true frame count */
         fclose(of);
         fprintf(stderr, "%u records (%u frames each) from %ld clips -> %s "
-                "(%ld skipped)\n", n_records, rec_frames, clips, out_path,
-                skipped);
+                "(%ld skipped, %ld stretched copies added)\n",
+                n_records, rec_frames, clips, out_path, skipped,
+                stretched_emitted);
     }
     return 0;
 }

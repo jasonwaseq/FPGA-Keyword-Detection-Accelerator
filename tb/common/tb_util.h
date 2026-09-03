@@ -66,6 +66,17 @@ static inline int tb_finish(const char *name)
     return 1;
 }
 
+/* Verilator flattens [N-1:0][7:0] to IData / QData / WData[]. Little-endian
+ * byte layout lets us index class c as byte c on the host. */
+static inline int8_t pack8_get(const void *p, int idx)
+{
+    return (int8_t)((const uint8_t *)p)[idx];
+}
+static inline void pack8_set(void *p, int idx, int8_t v)
+{
+    ((uint8_t *)p)[idx] = (uint8_t)v;
+}
+
 // --- clocked harness ------------------------------------------------------------
 // DUTs use ports clk_i / rst_ni. tick() = one full clock; on_posedge callback
 // runs right after the rising edge (registered outputs stable) and may set

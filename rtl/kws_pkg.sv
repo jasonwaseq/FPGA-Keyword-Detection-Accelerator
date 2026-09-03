@@ -32,12 +32,12 @@ package kws_pkg;
   localparam int unsigned WINDOW_STRIDE = 8;  // frames between windows
   localparam int unsigned HIST_DEPTH   = 64;  // circular buffer frames (2**n)
   localparam int unsigned CONV_K       = 3;   // temporal kernel size
-  localparam int unsigned CONV_OUT_CH  = 8;   // conv output channels
+  localparam int unsigned CONV_OUT_CH  = 8;   // conv output channels (UP5K LC budget)
   localparam int unsigned CONV_OUT_LEN = WINDOW_LEN - CONV_K + 1;  // 30
   localparam int unsigned POOL_SIZE    = 2;   // temporal pool factor (2**n)
   localparam int unsigned POOL_OUT_LEN = CONV_OUT_LEN / POOL_SIZE; // 15
   localparam int unsigned DENSE_IN     = POOL_OUT_LEN * CONV_OUT_CH; // 120
-  localparam int unsigned NUM_CLASSES  = 4;   // 0=silence 1=unknown 2.. keywords
+  localparam int unsigned NUM_CLASSES  = 10;  // 0=silence 1=unknown 2.. keywords
 
   // Datapath widths
   localparam int unsigned DATA_W = 8;   // INT8 features / weights / activations
@@ -56,11 +56,12 @@ package kws_pkg;
   // ~3-4 windows a short spoken keyword fully covers at stride 8.
   // ---------------------------------------------------------------------------
   localparam int unsigned SMOOTH_DEPTH   = 4;      // history length (2**n)
-  localparam logic signed [7:0] CONF_THRESH = 8'sd25; // smoothed score threshold
+  localparam logic signed [7:0] CONF_THRESH = 8'sd30; // smoothed score threshold
   localparam int unsigned VOTE_MIN       = 2;      // majority votes required
-  localparam int unsigned MIN_CONSEC     = 1;      // consecutive candidates
+  localparam int unsigned MIN_CONSEC     = 2;      // consecutive candidates
   localparam int unsigned DEBOUNCE_INFER = 12;     // refractory inferences
-  localparam logic [NUM_CLASSES-1:0] TARGET_MASK = 4'b1100; // classes 2,3 trigger
+  // classes 2..9 (yes/no/up/down/left/right/on/off) may trigger events
+  localparam logic [NUM_CLASSES-1:0] TARGET_MASK = 10'b11_1111_1100;
 
   // ---------------------------------------------------------------------------
   // UART packet protocol (see docs/protocol.md)

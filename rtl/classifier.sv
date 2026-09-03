@@ -13,8 +13,8 @@
 // Reads have 2-cycle latency and stream at one MAC per cycle with a 2-stage
 // valid shifter, identical in style to conv1d_engine.
 //
-// Cycle cost: 5 (M/S load) + NUM_CLASSES * (3 + IN_LEN + 2 + 1) ~= 509 at
-// defaults - negligible next to the convolution.
+// Cycle cost: 5 (M/S load) + NUM_CLASSES * (3 + IN_LEN + 2 + 1) ~= 1265 at
+// defaults (10 x 120) - still small next to the convolution.
 //
 // FSM: IDLE -> LD_M_A -> LD_M_W -> LD_M_C -> LD_S_W -> LD_S_C
 //        -> [LD_B_A -> LD_B_W -> LD_B_C -> MAC -> REQ] x NUM_CLASSES -> IDLE
@@ -63,7 +63,8 @@ module classifier #(
     ST_LD_M_A, ST_LD_M_W, ST_LD_M_C,
     ST_LD_S_W, ST_LD_S_C,
     ST_LD_B_A, ST_LD_B_W, ST_LD_B_C,
-    ST_MAC, ST_REQ
+    ST_MAC, ST_REQ,
+    ST_SCAN
   } state_e;
 
   state_e                  state_q;
@@ -74,6 +75,7 @@ module classifier #(
   logic [J_W-1:0]          j_q;
   logic [W_AW-1:0]         waddr_q;   // runs 0..NUM_CLASSES*IN_LEN-1 monotonically
   logic                    v1_q, v2_q;
+  logic [C_W-1:0]          scan_c_q;
 
   wire issue_v  = (state_q == ST_MAC) && (j_q != J_W'(IN_LEN));
   wire last_cls = (32'(cls_q) == NUM_CLASSES - 1);
@@ -91,15 +93,7 @@ module classifier #(
     .y_o       (req_y)
   );
 
-  argmax #(
-    .N      (NUM_CLASSES),
-    .DATA_W (DATA_W)
-  ) u_argmax (
-    .values_i (logits_o),
-    .idx_o    (winner_idx_o),
-    .max_o    (winner_val_o)
-  );
-
+  // Sequential argmax (registered outputs) - avoids a wide combo tree at N=10.
   assign busy_o = (state_q != ST_IDLE);
 
   // The parameter ROM is uniformly 32-bit; only ACC_W-bit biases and
@@ -124,6 +118,9 @@ module classifier #(
       wgt_addr_o     <= '0;
       bias_addr_o    <= '0;
       logits_o       <= '0;
+      winner_idx_o   <= '0;
+      winner_val_o   <= '0;
+      scan_c_q       <= '0;
     end else begin
       done_o <= 1'b0;
 
@@ -183,11 +180,41 @@ module classifier #(
         ST_REQ: begin
           logits_o[cls_q] <= DATA_W'(req_y);
           if (last_cls) begin
-            done_o  <= 1'b1;
-            state_q <= ST_IDLE;
+            // Seed sequential argmax with class 0.
+            winner_idx_o <= '0;
+            winner_val_o <= DATA_W'(req_y);  // last class is 0 only if N==1
+            // After writing logits_o[last], class 0's value is in logits_o[0]
+            // except when NUM_CLASSES==1 (just written). Re-seed next cycle.
+            scan_c_q <= '0;
+            state_q  <= ST_SCAN;
           end else begin
             cls_q   <= cls_q + 1'b1;
             state_q <= ST_LD_B_A;
+          end
+        end
+
+        ST_SCAN: begin
+          // First cycle: seed from logits_o[0]; then compare 1..N-1.
+          if (scan_c_q == '0) begin
+            winner_idx_o <= '0;
+            winner_val_o <= signed'(logits_o[0]);
+            if (NUM_CLASSES == 1) begin
+              done_o  <= 1'b1;
+              state_q <= ST_IDLE;
+            end else begin
+              scan_c_q <= C_W'(1);
+            end
+          end else begin
+            if (signed'(logits_o[scan_c_q]) > winner_val_o) begin
+              winner_val_o <= signed'(logits_o[scan_c_q]);
+              winner_idx_o <= scan_c_q;
+            end
+            if (32'(scan_c_q) == NUM_CLASSES - 1) begin
+              done_o  <= 1'b1;
+              state_q <= ST_IDLE;
+            end else begin
+              scan_c_q <= scan_c_q + 1'b1;
+            end
           end
         end
 

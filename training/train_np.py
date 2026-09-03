@@ -8,8 +8,9 @@ i.e. INT8 features from the EXACT deployment MFCC front end with frozen
 corpus normalization - the model trains on precisely what the hardware sees.
 
 Pipeline:
-  1. train the float twin of the hardware (conv1d 40->8 k3, ReLU, maxpool 2,
-     dense 120->4, time-major flatten) with Adam on cross-entropy;
+  1. train the float twin of the hardware (conv1d 40->CONV_OUT_CH k3, ReLU,
+     maxpool 2, dense DENSE_IN->NUM_CLASSES, time-major flatten) with Adam
+     on cross-entropy;
   2. post-training INT8 quantization with correct cross-layer bias scaling:
        s_w1 = max|W1|/127          W1q = round(W1/s_w1)   b1q = round(b1/s_w1)
        (M1,S1) calibrated on real windows;  k1 = (M1/2^S1)/s_w1
@@ -40,7 +41,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "..", "model"))
 import kws_quant as q
 
-LABELS = ["silence", "unknown", "yes", "no"]
+LABELS = q.LABELS
 
 
 # --- data -------------------------------------------------------------------
@@ -59,38 +60,46 @@ def load_kwsf(path):
 # --- float model -------------------------------------------------------------
 class Net:
     def __init__(self, rng):
-        self.W1 = rng.normal(0, 0.05, (8, 3, 40)).astype(np.float64)
-        self.b1 = np.zeros(8)
-        self.W2 = rng.normal(0, 0.05, (4, 120)).astype(np.float64)
-        self.b2 = np.zeros(4)
+        ch = q.CONV_OUT_CH
+        k_flat = q.CONV_K * q.NUM_MFCC          # 120
+        self.W1 = rng.normal(0, 0.05, (ch, q.CONV_K, q.NUM_MFCC)).astype(np.float64)
+        self.b1 = np.zeros(ch)
+        self.W2 = rng.normal(0, 0.05, (q.NUM_CLASSES, q.DENSE_IN)).astype(np.float64)
+        self.b2 = np.zeros(q.NUM_CLASSES)
         self.params = [self.W1, self.b1, self.W2, self.b2]
         self.m = [np.zeros_like(p) for p in self.params]
         self.v = [np.zeros_like(p) for p in self.params]
         self.t = 0
+        self._k_flat = k_flat
 
     @staticmethod
     def im2col(x):
-        # x [N,32,40] -> windows [N,30,120] with layout k*40+ic
-        return np.concatenate([x[:, 0:30], x[:, 1:31], x[:, 2:32]], axis=2)
+        # x [N,WINDOW_LEN,NUM_MFCC] -> [N,CONV_OUT_LEN,CONV_K*NUM_MFCC]
+        return np.concatenate(
+            [x[:, 0:q.CONV_OUT_LEN],
+             x[:, 1:q.CONV_OUT_LEN + 1],
+             x[:, 2:q.CONV_OUT_LEN + 2]], axis=2)
 
     def forward(self, x):
-        xw = self.im2col(x)                              # [N,30,120]
-        w1f = self.W1.reshape(8, 120)
-        a = xw @ w1f.T + self.b1                         # [N,30,8]
+        ch = q.CONV_OUT_CH
+        xw = self.im2col(x)                              # [N,30,k_flat]
+        w1f = self.W1.reshape(ch, self._k_flat)
+        a = xw @ w1f.T + self.b1                         # [N,30,ch]
         r = np.maximum(a, 0.0)
-        p = r.reshape(-1, 15, 2, 8)
-        pooled = p.max(axis=2)                           # [N,15,8]
-        flat = pooled.reshape(-1, 120)                   # time-major
+        p = r.reshape(-1, q.POOL_OUT_LEN, q.POOL_SIZE, ch)
+        pooled = p.max(axis=2)                           # [N,15,ch]
+        flat = pooled.reshape(-1, q.DENSE_IN)            # time-major
         logits = flat @ self.W2.T + self.b2
         cache = (xw, a, r, p, pooled, flat)
         return logits, cache
 
-    # Keyword classes weighted 2x: sharpens the yes/no-vs-unknown margins the
+    # Keyword classes weighted 2x: sharpens keyword-vs-unknown margins the
     # streaming decision layer thresholds on (silence/unknown recall has
     # plenty of slack in the confusion matrix).
-    CLASS_W = np.array([1.0, 1.0, 2.0, 2.0])
+    CLASS_W = np.array([1.0, 1.0] + [2.0] * (q.NUM_CLASSES - 2))
 
     def backward(self, x, y, logits, cache, wd=1e-4):
+        ch = q.CONV_OUT_CH
         xw, a, r, p, pooled, flat = cache
         n = x.shape[0]
         e = np.exp(logits - logits.max(axis=1, keepdims=True))
@@ -103,18 +112,18 @@ class Net:
 
         gW2 = d.T @ flat + wd * self.W2
         gb2 = d.sum(axis=0)
-        dflat = d @ self.W2                              # [N,120]
-        dpooled = dflat.reshape(-1, 15, 8)
+        dflat = d @ self.W2                              # [N,DENSE_IN]
+        dpooled = dflat.reshape(-1, q.POOL_OUT_LEN, ch)
         # max-pool routing
         dp = np.zeros_like(p)
         mx = p.max(axis=2, keepdims=True)
         mask = (p == mx)
         mask = mask / np.maximum(mask.sum(axis=2, keepdims=True), 1)
         dp = mask * dpooled[:, :, None, :]
-        dr = dp.reshape(-1, 30, 8)
+        dr = dp.reshape(-1, q.CONV_OUT_LEN, ch)
         da = dr * (a > 0)
-        gW1 = np.tensordot(da, xw, axes=([0, 1], [0, 1])).reshape(8, 3, 40) \
-            + wd * self.W1
+        gW1 = np.tensordot(da, xw, axes=([0, 1], [0, 1])).reshape(
+            ch, q.CONV_K, q.NUM_MFCC) + wd * self.W1
         gb1 = da.sum(axis=(0, 1))
         return [gW1, gb1, gW2, gb2]
 
@@ -196,16 +205,24 @@ def quantize(net, cal_windows):
     }
 
 
-def int8_eval(model, x, y, limit=2000):
+def int8_eval(model, x, y, limit=None):
+    """Bit-exact INT8 accuracy. limit=None evaluates the full set (gate metric)."""
     idx = np.arange(len(x))
-    if len(idx) > limit:
+    if limit is not None and len(idx) > limit:
         idx = idx[:: len(idx) // limit + 1]
-    conf = np.zeros((4, 4), dtype=int)
+    conf = np.zeros((q.NUM_CLASSES, q.NUM_CLASSES), dtype=int)
     for i in idx:
         logits = q.infer_int(x[i].tolist(), model)
         conf[y[i], int(np.argmax(logits))] += 1
     acc = np.trace(conf) / conf.sum()
     return acc, conf
+
+
+def cosine_lr(base_lr, epoch, epochs, min_lr=1e-5):
+    """Cosine decay from base_lr -> min_lr over epochs."""
+    import math
+    t = epoch / max(epochs - 1, 1)
+    return min_lr + 0.5 * (base_lr - min_lr) * (1.0 + math.cos(math.pi * t))
 
 
 # --- self-test stream ----------------------------------------------------------
@@ -229,9 +246,9 @@ def pick_selftest(model, full_x, full_y):
 def stream_metrics(model, full_x, full_y, per_class=120):
     """Detection statistics over held-out full-clip streams."""
     out = {}
-    for cls in range(4):
+    for cls in range(q.NUM_CLASSES):
         idx = np.where(full_y == cls)[0][:per_class]
-        fired = {0: 0, 1: 0, 2: 0, 3: 0}
+        fired = {c: 0 for c in range(q.NUM_CLASSES)}
         none = 0
         for i in idx:
             ev = q.stream_events(full_x[i][4:4 + q.SELFTEST_FRAMES].tolist(),
@@ -250,7 +267,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--work", required=True, help="featurizer output dir")
     ap.add_argument("--weights-out", default="weights")
-    ap.add_argument("--epochs", type=int, default=40)
+    ap.add_argument("--epochs", type=int, default=100)
     ap.add_argument("--batch", type=int, default=512)
     ap.add_argument("--lr", type=float, default=2e-3)
     ap.add_argument("--seed", type=int, default=1)
@@ -261,40 +278,44 @@ def main():
     xt, yt = load_kwsf(os.path.join(work, "train.bin"))
     xv, yv = load_kwsf(os.path.join(work, "val.bin"))
     xe, ye = load_kwsf(os.path.join(work, "test.bin"))
+    print(f"geometry: CONV_OUT_CH={q.CONV_OUT_CH} DENSE_IN={q.DENSE_IN} "
+          f"NUM_CLASSES={q.NUM_CLASSES}")
     print(f"train {len(xt)}  val {len(xv)}  test {len(xe)}")
 
     xtf = xt.astype(np.float64)
+    xvf = xv.astype(np.float64)
+    xef = xe.astype(np.float64)
     net = Net(rng)
     best_val, best = 0.0, None
     for ep in range(args.epochs):
         order = rng.permutation(len(xtf))
-        lr = args.lr * (0.5 ** (ep // 15))
+        lr = cosine_lr(args.lr, ep, args.epochs)
         for i in range(0, len(order), args.batch):
             b = order[i:i + args.batch]
             logits, cache = net.forward(xtf[b])
             grads = net.backward(xtf[b], yt[b], logits, cache)
             net.adam(grads, lr)
-        va = net.accuracy(xv.astype(np.float64), yv)
-        print(f"epoch {ep + 1:3d}/{args.epochs}  val_acc {va:.4f}")
+        va = net.accuracy(xvf, yv)
+        print(f"epoch {ep + 1:3d}/{args.epochs}  lr {lr:.5f}  val_acc {va:.4f}")
         if va > best_val:
             best_val = va
             best = [p.copy() for p in net.params]
     net.W1, net.b1, net.W2, net.b2 = best
     net.params = [net.W1, net.b1, net.W2, net.b2]
 
-    test_acc = net.accuracy(xe.astype(np.float64), ye)
+    test_acc = net.accuracy(xef, ye)
     print(f"float: best val {best_val:.4f}  test {test_acc:.4f}")
 
     # --- quantize on real calibration windows -------------------------------
-    cal_idx = rng.permutation(len(xt))[:300]
+    cal_idx = rng.permutation(len(xt))[:500]
     cal = [xt[i].tolist() for i in cal_idx]
     model = quantize(net, cal)
     print(f"requant: conv M={model['m_conv']} S={model['s_conv']}, "
           f"dense M={model['m_dense']} S={model['s_dense']}")
 
-    int_acc, conf = int8_eval(model, xe, ye)
+    int_acc, conf = int8_eval(model, xe, ye)   # full test set (92% gate)
     print(f"int8 (bit-exact) test accuracy: {int_acc:.4f}")
-    print("confusion (rows=truth sil/unk/yes/no):")
+    print(f"confusion (rows=truth {'/'.join(LABELS)}):")
     print(conf)
 
     # --- persist the quantized model for tuning + emission --------------------

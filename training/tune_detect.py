@@ -7,7 +7,7 @@ against false accepts. This script caches per-window logit sequences for the
 held-out full-clip streams once (the expensive bit-exact part), then sweeps
 the smoothing configuration over the cache and reports, per config:
 
-    det_yes / det_no : fraction of 'yes'/'no' streams firing the right class
+    det              : mean fraction of keyword streams firing the right class
     xtalk            : keyword streams firing the WRONG keyword
     fa               : events fired on silence/unknown streams (false accepts)
 
@@ -33,13 +33,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
 import kws_quant as q
 from train_np import load_kwsf
 
-LABELS = ["silence", "unknown", "yes", "no"]
+LABELS = q.LABELS
+KW = list(range(2, q.NUM_CLASSES))
 
 
 def cache_logits(model, fx, fy, per_class):
     """Per-stream window logit sequences (the window-schedule mirror)."""
     streams = []
-    for cls in range(4):
+    for cls in range(q.NUM_CLASSES):
         for i in np.where(fy == cls)[0][:per_class]:
             frames = fx[i][4:4 + q.SELFTEST_FRAMES].tolist()
             seq = []
@@ -53,10 +54,11 @@ def cache_logits(model, fx, fy, per_class):
 
 
 def run_cfg(streams, **cfg):
-    det = {2: 0, 3: 0}
-    n_kw = {2: 0, 3: 0}
+    det = {c: 0 for c in KW}
+    n_kw = {c: 0 for c in KW}
     xtalk = 0
     fa = 0
+    kw_set = set(KW)
     for cls, seq in streams:
         sim = q.SmoothSim(**cfg)
         fired = set()
@@ -65,15 +67,16 @@ def run_cfg(streams, **cfg):
             ev = sim.step(logits, winner)
             if ev:
                 fired.add(ev["cls"])
-        if cls in (2, 3):
+        if cls in kw_set:
             n_kw[cls] += 1
             if cls in fired:
                 det[cls] += 1
-            if ({2, 3} - {cls}) & fired:
+            if (kw_set - {cls}) & fired:
                 xtalk += 1
         else:
             fa += len(fired)
-    return (det[2] / max(n_kw[2], 1), det[3] / max(n_kw[3], 1), xtalk, fa)
+    rates = [det[c] / max(n_kw[c], 1) for c in KW]
+    return sum(rates) / len(rates), xtalk, fa
 
 
 def main():
@@ -92,24 +95,24 @@ def main():
     n_bg = sum(1 for c, _ in streams if c in (0, 1))
     print(f"{len(streams)} streams cached ({n_bg} background)")
 
-    print(f"{'dep':>3} {'thr':>4} {'vote':>4} {'consec':>6} | {'det_yes':>7} "
-          f"{'det_no':>7} {'xtalk':>5} {'fa':>4}")
+    print(f"{'dep':>3} {'thr':>4} {'vote':>4} {'consec':>6} | "
+          f"{'det_mean':>8} {'xtalk':>5} {'fa':>4}")
     results = []
     for depth, thr, vote, consec in itertools.product(
             (4, 8), (10, 15, 20, 25, 30, 35), (2, 3, 4), (1, 2)):
-        dy, dn, xt, fa = run_cfg(streams, depth=depth, thresh=thr,
-                                 vote_min=vote, min_consec=consec)
-        results.append((depth, thr, vote, consec, dy, dn, xt, fa))
-        print(f"{depth:>3} {thr:>4} {vote:>4} {consec:>6} | {dy:>7.3f} "
-              f"{dn:>7.3f} {xt:>5} {fa:>4}")
+        dmean, xt, fa = run_cfg(streams, depth=depth, thresh=thr,
+                                vote_min=vote, min_consec=consec)
+        results.append((depth, thr, vote, consec, dmean, xt, fa))
+        print(f"{depth:>3} {thr:>4} {vote:>4} {consec:>6} | {dmean:>8.3f} "
+              f"{xt:>5} {fa:>4}")
 
     # Recommend: zero false accepts, then max mean detection
-    ok = [r for r in results if r[7] == 0]
-    best = max(ok, key=lambda r: r[4] + r[5]) if ok else None
+    ok = [r for r in results if r[6] == 0]
+    best = max(ok, key=lambda r: r[4]) if ok else None
     if best:
         print(f"\nrecommended (fa=0): depth={best[0]} thresh={best[1]} "
               f"vote_min={best[2]} min_consec={best[3]}  "
-              f"det_yes={best[4]:.3f} det_no={best[5]:.3f} xtalk={best[6]}")
+              f"det_mean={best[4]:.3f} xtalk={best[5]}")
 
 
 if __name__ == "__main__":

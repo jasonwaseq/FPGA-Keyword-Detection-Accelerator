@@ -13,6 +13,15 @@
  * the hardware, and detections are compared: this is a live hardware-vs-
  * software cross-check, not a simulation artifact.
  *
+ * Startup warm-up: the mic capture path (WSLg/PulseAudio bridge, measured on
+ * the dev machine) produces a clipped open-transient followed by a decaying
+ * broadband tail for the first ~2-3 s of a session. Frames are still sent to
+ * the FPGA and mirrored into the reference model throughout (so the window
+ * scheduler and smoothing state stay correctly populated), but EVT_KEYWORD
+ * results with frame_num inside the warm-up window are suppressed from
+ * output on both the hardware and reference sides, rather than reported as
+ * real detections. Tune with --warmup <seconds>; 0 disables it.
+ *
  * The serial link auto-reconnects: if the port drops, the app re-opens it,
  * re-runs the handshake (PING / READ_VERSION / START_STREAM) and resumes.
  * ---------------------------------------------------------------------------*/
@@ -74,10 +83,39 @@ static int           g_fpga_clk_mhz = 12;
 static int8_t g_win[KWS_WINDOW_LEN][KWS_NUM_MFCC];  /* ring by frame index    */
 static kws_smooth_t g_smooth;
 
+/* --- warm-up state --------------------------------------------------------------*/
+#define KWS_FRAME_RATE_HZ 100   /* one MFCC frame per 10 ms hop */
+static uint32_t g_warmup_frames = 3 * KWS_FRAME_RATE_HZ;  /* default 3 s, see --warmup */
+static int      g_warmup_last_secs_shown = -1;
+
 static void on_sigint(int sig)
 {
     (void)sig;
     g_stop = 1;
+}
+
+/* Prints a countdown to the console while frames are still inside the
+ * warm-up window, once per second-boundary crossed (not once per frame).
+ * Called every frame; cheap no-op once warm-up has completed. */
+static void warmup_countdown_tick(uint32_t frame_num)
+{
+    if (g_warmup_frames == 0) return;
+    if (frame_num >= g_warmup_frames) {
+        if (g_warmup_last_secs_shown != 0) {
+            printf("\r[warm-up] settling mic input... done - listening now.        \n");
+            fflush(stdout);
+            g_warmup_last_secs_shown = 0;
+        }
+        return;
+    }
+    uint32_t frames_left = g_warmup_frames - frame_num;
+    int secs_left = (int)((frames_left + KWS_FRAME_RATE_HZ - 1) / KWS_FRAME_RATE_HZ);
+    if (secs_left != g_warmup_last_secs_shown) {
+        printf("\r[warm-up] settling mic input... %d s remaining (please stay quiet)   ",
+               secs_left);
+        fflush(stdout);
+        g_warmup_last_secs_shown = secs_left;
+    }
 }
 
 /* --- serial TX helpers ---------------------------------------------------------*/
@@ -117,6 +155,12 @@ static void handle_packet(const kws_packet_t *pkt)
     case KWS_PKT_EVT_KEYWORD: {
         kws_event_t evt;
         if (kws_event_decode(pkt, &evt) == 0) {
+            if (pkt->frame_num < g_warmup_frames) {
+                KWS_DEBUG("(suppressed, warm-up) hw '%s' conf=%u votes=%u frame=%u",
+                          kws_config_label(&g_cfg, evt.class_id),
+                          evt.confidence, evt.votes, pkt->frame_num);
+                break;
+            }
             double e2e = kws_stats_event(&g_st, pkt->frame_num, now_us());
             KWS_INFO(">>> KEYWORD '%s'  conf=%u votes=%u  frame=%u  "
                      "fpga=%.2fms  end-to-end=%.1fms",
@@ -241,15 +285,12 @@ static int connect_and_start(void)
     }
 }
 
-/* --- reference model mirror -----------------------------------------------------*/
 static void ref_check(uint32_t frame_num, const int8_t *feat)
 {
     memcpy(g_win[frame_num % KWS_WINDOW_LEN], feat, KWS_NUM_MFCC);
 
-    /* Mirror of the RTL window_scheduler: windows complete at frames
-     * WINDOW_LEN-1, WINDOW_LEN-1+STRIDE, ... (frame numbers are 0-based). */
-    uint32_t n = frame_num + 1;   /* frames sent so far */
-    if (n < KWS_WINDOW_LEN || (n - KWS_WINDOW_LEN) % 8 /* stride */ != 0) return;
+    uint32_t n = frame_num + 1;
+    if (n < KWS_WINDOW_LEN || (n - KWS_WINDOW_LEN) % 8 != 0) return;
 
     int8_t win[KWS_WINDOW_LEN][KWS_NUM_MFCC];
     for (uint32_t t = 0; t < KWS_WINDOW_LEN; t++) {
@@ -261,10 +302,21 @@ static void ref_check(uint32_t frame_num, const int8_t *feat)
     int winner;
     kws_ref_infer(win, logits, &winner, KWS_POOL_MAX);
 
+    /* Debug: show raw per-window winner/logit even when smoothing doesn't
+     * fire, so borderline-but-not-quite-threshold cases are visible. */
+    KWS_DEBUG("  [raw] window@frame=%u winner='%s' logit=%d",
+              frame_num, kws_config_label(&g_cfg, winner), logits[winner]);
+
     kws_ref_event_t evt;
     if (kws_smooth_step(&g_smooth, logits, winner, &evt)) {
+        if (frame_num < g_warmup_frames) {
+            KWS_DEBUG("(suppressed, warm-up) ref '%s' conf=%u votes=%u at frame %u",
+                      kws_config_label(&g_cfg, evt.class_id),
+                      evt.confidence, evt.votes, frame_num);
+            return;
+        }
         g_st.ref_events++;
-        g_st.agree++;   /* provisional; unmatched events reported at exit */
+        g_st.agree++;
         KWS_INFO("    [ref] predicts '%s' conf=%u votes=%u at frame %u",
                  kws_config_label(&g_cfg, evt.class_id),
                  evt.confidence, evt.votes, frame_num);
@@ -280,6 +332,11 @@ static void usage(const char *argv0)
            "  --baud <rate>         UART baud rate (default 115200)\n"
            "  --input <spec>        mic | wav:<path> | synth\n"
            "  --duration <s>        stop after N seconds\n"
+           "  --warmup <s>          seconds of settling time after stream start\n"
+           "                        during which detections are suppressed, not\n"
+           "                        reported (default 3; 0 disables); frames are\n"
+           "                        still sent and reference/smoothing state is\n"
+           "                        still advanced throughout\n"
            "  --stats <s>           FPGA statistics poll interval (0 = off)\n"
            "  --no-check            disable software reference cross-check\n"
            "  --log <file>          append log to file\n"
@@ -290,6 +347,7 @@ static void usage(const char *argv0)
 int main(int argc, char **argv)
 {
     kws_config_default(&g_cfg);
+    double warmup_secs = 3.0;
 
     /* First pass: explicit --config */
     const char *cfg_path = 0;
@@ -312,6 +370,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--baud")   && i + 1 < argc) g_cfg.baud = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--input")  && i + 1 < argc) snprintf(g_cfg.input, sizeof(g_cfg.input), "%s", argv[++i]);
         else if (!strcmp(argv[i], "--duration") && i + 1 < argc) g_cfg.duration_s = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--warmup") && i + 1 < argc) warmup_secs = atof(argv[++i]);
         else if (!strcmp(argv[i], "--stats")  && i + 1 < argc) g_cfg.stats_interval_s = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--no-check"))               g_cfg.check = 0;
         else if (!strcmp(argv[i], "--log")    && i + 1 < argc) snprintf(g_cfg.log_file, sizeof(g_cfg.log_file), "%s", argv[++i]);
@@ -320,14 +379,17 @@ int main(int argc, char **argv)
         else { fprintf(stderr, "unknown option '%s'\n", argv[i]); usage(argv[0]); return 1; }
     }
 
+    if (warmup_secs < 0.0) warmup_secs = 0.0;
+    g_warmup_frames = (uint32_t)(warmup_secs * KWS_FRAME_RATE_HZ + 0.5);
+
     kws_log_init(g_cfg.verbose ? KWS_LOG_DEBUG : KWS_LOG_INFO,
                  g_cfg.log_file[0] ? g_cfg.log_file : 0);
     kws_stats_init(&g_st);
     kws_smooth_init(&g_smooth, 0);
     signal(SIGINT, on_sigint);
 
-    KWS_INFO("iCE40 KWS host | port=%s baud=%d input=%s check=%d",
-             g_cfg.port, g_cfg.baud, g_cfg.input, g_cfg.check);
+    KWS_INFO("iCE40 KWS host | port=%s baud=%d input=%s check=%d warmup=%.1fs",
+             g_cfg.port, g_cfg.baud, g_cfg.input, g_cfg.check, warmup_secs);
 
     /* Audio + MFCC */
     char err[128];
@@ -343,6 +405,13 @@ int main(int argc, char **argv)
     kws_mfcc_set_stats(&mfcc, kws_feat_mean, kws_feat_std, KWS_FEAT_FROZEN);
 
     if (connect_and_start() != 0) { kws_audio_close(audio); return 1; }
+
+    if (g_warmup_frames > 0) {
+        printf("[warm-up] settling mic input... %.0f s remaining (please stay quiet)   ",
+               warmup_secs);
+        fflush(stdout);
+        g_warmup_last_secs_shown = (int)(warmup_secs + 0.999);
+    }
 
     /* Streaming loop: 400-sample analysis frame advanced by 160 per hop. */
     int16_t   frame[KWS_MFCC_FRAME_LEN];
@@ -368,6 +437,7 @@ int main(int argc, char **argv)
         }
         kws_stats_frame_sent(&g_st, frame_num, now_us());
         if (g_cfg.check) ref_check(frame_num, feat);
+        warmup_countdown_tick(frame_num);
         frame_num++;
 
         poll_serial();

@@ -59,7 +59,7 @@ int main(int argc, char **argv)
         int ref_winner = kws_ref_argmax(ref, KWS_NUM_CLASSES);
 
         for (int c = 0; c < KWS_NUM_CLASSES; c++) {
-            int8_t dut_logit = (int8_t)((h.dut->logits_o >> (8 * c)) & 0xFF);
+            int8_t dut_logit = pack8_get(&h.dut->logits_o, c);
             CHECK(dut_logit == ref[c], "run %d logit[%d]: dut %d != ref %d",
                   run, c, dut_logit, ref[c]);
         }

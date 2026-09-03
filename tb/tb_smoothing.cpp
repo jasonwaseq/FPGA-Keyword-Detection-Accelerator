@@ -12,7 +12,8 @@
 #include "kws_ref.h"
 
 struct Cfg {
-    int8_t thresh; uint8_t vote_min, min_consec, debounce, mask, enable;
+    int8_t thresh; uint8_t vote_min, min_consec, debounce, enable;
+    uint16_t mask;
 };
 
 int main(int argc, char **argv)
@@ -22,11 +23,11 @@ int main(int argc, char **argv)
 
     // vote_min <= SMOOTH_DEPTH (4): higher values can never be satisfied.
     const Cfg cfgs[] = {
-        { 25, 2, 1, 12, 0x0C, 1 },   // shipped defaults (tuned operating point)
-        { 15, 2, 1,  4, 0x0C, 1 },   // permissive
-        { 70, 4, 2, 20, 0x08, 1 },   // strict, class 3 only
-        { 25, 2, 1, 12, 0x0C, 0 },   // disabled: must never fire
-        {  0, 0, 0,  0, 0x0F, 1 },   // degenerate: everything fires
+        { 25, 2, 1, 12, 1, 0x3FC },  // shipped defaults (tuned operating point)
+        { 15, 2, 1,  4, 1, 0x3FC },  // permissive
+        { 70, 4, 2, 20, 1, 0x008 },  // strict, class 3 only
+        { 25, 2, 1, 12, 0, 0x3FC },  // disabled: must never fire
+        {  0, 0, 0,  0, 1, 0x3FF },  // degenerate: everything fires
     };
 
     h.dut->update_i = 0;
@@ -37,6 +38,9 @@ int main(int argc, char **argv)
 
         // (Re)initialize DUT and reference
         h.reset();
+        // confidence_accumulator clears its EBR history after reset
+        for (int w = 0; w < 128 && h.dut->busy_o; w++) h.tick();
+        CHECK(!h.dut->busy_o, "cfg %zu: accumulator stuck busy after reset", ci);
         h.dut->en_i          = c.enable;
         h.dut->thresh_i      = (uint8_t)c.thresh;
         h.dut->vote_min_i    = c.vote_min;
@@ -63,10 +67,9 @@ int main(int argc, char **argv)
 
             int winner = kws_ref_argmax(logits, KWS_NUM_CLASSES);
 
-            uint32_t packed = 0;
+            memset(&h.dut->logits_i, 0, sizeof(h.dut->logits_i));
             for (int k = 0; k < KWS_NUM_CLASSES; k++)
-                packed |= (uint32_t)(uint8_t)logits[k] << (8 * k);
-            h.dut->logits_i = packed;
+                pack8_set(&h.dut->logits_i, k, logits[k]);
             h.dut->winner_i = (uint8_t)winner;
             h.dut->update_i = 1;
             h.tick();
@@ -76,17 +79,21 @@ int main(int argc, char **argv)
             kws_ref_event_t rev;
             int rfire = kws_smooth_step(&ref, logits, winner, &rev);
 
-            // DUT evaluates one cycle after the update; give it two.
+            // DUT folds one class/cycle into EBR history, then evaluates.
+            // Budget: ~3 cycles/class + margin (N=10 -> well under 64).
             int dfire = 0;
             uint8_t dclass = 0, dconf = 0, dvotes = 0;
-            for (int w = 0; w < 2; w++) {
+            for (int w = 0; w < 64; w++) {
                 h.tick();
                 if (h.dut->detect_o) {
                     dfire  = 1;
                     dclass = h.dut->det_class_o;
                     dconf  = h.dut->det_conf_o;
                     dvotes = h.dut->det_votes_o;
+                    break;
                 }
+                if (!h.dut->busy_o && w > 0)
+                    break;  // fold+eval finished with no detection
             }
 
             CHECK(dfire == rfire, "cfg %zu step %d: dut fire=%d ref fire=%d",

@@ -27,12 +27,15 @@ import os
 NUM_MFCC     = 40   # input channels (MFCC coefficients per frame)
 WINDOW_LEN   = 32   # frames per inference window
 CONV_K       = 3    # temporal kernel size
-CONV_OUT_CH  = 8    # convolution output channels
+CONV_OUT_CH  = 8    # convolution output channels (UP5K LC budget; see docs)
 CONV_OUT_LEN = WINDOW_LEN - CONV_K + 1          # 30 (valid convolution)
 POOL_SIZE    = 2    # temporal pooling factor
 POOL_OUT_LEN = CONV_OUT_LEN // POOL_SIZE        # 15
 DENSE_IN     = POOL_OUT_LEN * CONV_OUT_CH       # 120
-NUM_CLASSES  = 4    # 0=silence 1=unknown 2..N = keywords
+NUM_CLASSES  = 10   # 0=silence 1=unknown 2..N = keywords
+LABELS = ["silence", "unknown", "yes", "no", "up", "down",
+          "left", "right", "on", "off"]
+assert len(LABELS) == NUM_CLASSES
 
 # Requantization multiplier precision: M is a positive integer < 2**15 so the
 # RTL multiply is a signed 24x16 product (maps onto one SB_MAC16).
@@ -189,8 +192,8 @@ def calibrate(conv_w, conv_b, dense_w, dense_b, rng, n_windows=64,
 # smoothing defaults - keep synchronized with rtl/kws_pkg.sv and
 # host/src/ref_model.c (tuned operating point, see training/tune_detect.py)
 SMOOTH_DEPTH = 4
-SMOOTH_DEFAULTS = dict(thresh=25, vote_min=2, min_consec=1, debounce=12,
-                       target_mask=0x0C, enable=1)
+SMOOTH_DEFAULTS = dict(thresh=30, vote_min=2, min_consec=2, debounce=12,
+                       target_mask=0x3FC, enable=1)  # bits 2..9
 
 
 class SmoothSim:
