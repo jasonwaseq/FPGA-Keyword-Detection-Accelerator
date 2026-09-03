@@ -6,7 +6,7 @@ Stitches real Speech Commands utterances (never seen in training) into one
 16 kHz mono stream with low background noise between them, and prints the
 schedule of expected detections. Streaming this file through the live system
 (kws_host --input wav:...) demonstrates genuine keyword recognition on the
-FPGA: keyword events must land at the scheduled positions and nothing may
+FPGA: 'yes'/'no' events must land at the scheduled positions and nothing may
 fire on the unknown-word or noise segments.
 
 Usage:
@@ -18,14 +18,7 @@ import argparse
 import os
 import random
 import struct
-import sys
 import wave
-
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                "..", "model"))
-import kws_quant as q
-
-KEYWORDS = q.LABELS[2:]
 
 
 def read_wav_mono16(path, want_rate=16000):
@@ -45,7 +38,7 @@ def main():
     ap.add_argument("--work", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--n-each", type=int, default=2, help="clips per keyword")
+    ap.add_argument("--n-each", type=int, default=4, help="clips per keyword")
     args = ap.parse_args()
     rng = random.Random(args.seed)
     data_dir = os.path.expanduser(args.data)
@@ -74,15 +67,13 @@ def main():
         off = rng.randint(0, len(noise) - n - 1)
         return [int(s * 0.08) for s in noise[off:off + n]]
 
-    # schedule: one of each keyword per round, unknown words interleaved
+    # schedule: noise gaps between utterances; unknown words interleaved
     sequence = []
-    unk_i = 0
     for i in range(args.n_each):
-        for ki, name in enumerate(KEYWORDS):
-            cls = ki + 2
-            sequence.append((name, test[cls][i]))
-            sequence.append(("unknown", test[1][unk_i]))
-            unk_i += 1
+        sequence.append(("yes", test[2][i]))
+        sequence.append(("unknown", test[1][2 * i]))
+        sequence.append(("no", test[3][i]))
+        sequence.append(("unknown", test[1][2 * i + 1]))
 
     samples = noise_seg(24000)                 # 1.5 s lead-in
     schedule = []
@@ -103,7 +94,7 @@ def main():
     print(f"wrote {out_path}: {len(samples) / 16000.0:.1f} s")
     print("expected detections (time  label  source clip):")
     for t0, label, rel in schedule:
-        mark = ">>" if label in KEYWORDS else "  "
+        mark = ">>" if label in ("yes", "no") else "  "
         print(f"  {mark} {t0:6.2f}s  {label:8s} {rel}")
 
 

@@ -451,30 +451,10 @@ module kws_core #(
   );
 
   // --- temporal smoothing + event generation ----------------------------------
-  // Pipeline the classifier→smoother handoff by one cycle so the combinatorial
-  // argmax over NUM_CLASSES logits is not in the same path as the smoother's
-  // history fold (needed for 12 MHz closure at N=10).
   logic        detect;
   logic [$clog2(kws_pkg::NUM_CLASSES)-1:0] det_class;
   logic [7:0]  det_conf;
   logic [3:0]  det_votes;
-  logic        smooth_update_q;
-  logic [kws_pkg::NUM_CLASSES-1:0][7:0]    smooth_logits_q;
-  logic [$clog2(kws_pkg::NUM_CLASSES)-1:0] smooth_winner_q;
-
-  always_ff @(posedge clk_i or negedge rst_eng_n) begin
-    if (!rst_eng_n) begin
-      smooth_update_q <= 1'b0;
-      smooth_logits_q <= '0;
-      smooth_winner_q <= '0;
-    end else begin
-      smooth_update_q <= cls_done;
-      if (cls_done) begin
-        smooth_logits_q <= logits;
-        smooth_winner_q <= winner_idx;
-      end
-    end
-  end
 
   temporal_smoothing #(
     .N      (kws_pkg::NUM_CLASSES),
@@ -484,9 +464,9 @@ module kws_core #(
     .clk_i,
     .rst_ni        (rst_eng_n),
     .clear_i       (1'b0),          // engine reset covers clears
-    .update_i      (smooth_update_q),
-    .logits_i      (smooth_logits_q),
-    .winner_i      (smooth_winner_q),
+    .update_i      (cls_done),
+    .logits_i      (logits),
+    .winner_i      (winner_idx),
     .en_i          (cfg_smooth_en),
     .thresh_i      (cfg_thresh),
     .vote_min_i    (cfg_vote_min),

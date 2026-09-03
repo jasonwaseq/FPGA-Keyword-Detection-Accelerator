@@ -11,7 +11,7 @@
 `default_nettype none
 
 module bias_memory #(
-  parameter int unsigned N_BIAS   = 64,
+  parameter int unsigned N_BIAS   = 8,
   parameter              MEM_FILE = "weights/conv_bias.mem"
 ) (
   input  wire                          clk_i,

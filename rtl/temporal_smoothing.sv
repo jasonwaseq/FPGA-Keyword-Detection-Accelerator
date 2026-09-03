@@ -3,8 +3,8 @@
 // Module  : temporal_smoothing
 // Purpose : Decision layer between raw per-window classifications and keyword
 //           events. A single inference never triggers; a detection requires
-//           ALL of the following, evaluated after each classifier result is
-//           folded into the moving-average history:
+//           ALL of the following, evaluated one cycle after each classifier
+//           result is folded in:
 //
 //   1. moving average : argmax of the DEPTH-deep per-class logit averages
 //                       (confidence_accumulator) selects the winner
@@ -20,9 +20,9 @@
 // kws_pkg). The identical decision procedure is implemented in
 // host/src/ref_model.c and locked down by tb_smoothing / tb_kws_core.
 //
-// Pipeline: update_i starts a multi-cycle confidence fold; then a sequential
-// argmax scan (one class/cycle) selects the smoothed winner; then eval_q
-// fires. Sequential scan keeps the UP5K timing/LC budget with N=10.
+// Pipeline: update_i (cycle 0: fold logits, record winner) -> eval_q
+// (cycle 1: decide, pulse detect_o). Back-to-back updates cannot occur -
+// inferences are separated by thousands of cycles.
 // -----------------------------------------------------------------------------
 `default_nettype none
 
@@ -35,10 +35,12 @@ module temporal_smoothing #(
   input  wire                       rst_ni,
   input  wire                       clear_i,
 
+  // Per-inference result (classifier done strobe)
   input  wire                       update_i,
   input  wire [N-1:0][DATA_W-1:0]   logits_i,
-  input  wire [$clog2(N)-1:0]       winner_i,
+  input  wire [$clog2(N)-1:0]       winner_i,     // per-window argmax
 
+  // Runtime configuration (register file)
   input  wire                       en_i,
   input  wire signed [DATA_W-1:0]   thresh_i,
   input  wire        [3:0]          vote_min_i,
@@ -46,17 +48,18 @@ module temporal_smoothing #(
   input  wire        [7:0]          debounce_i,
   input  wire        [N-1:0]        target_mask_i,
 
-  output logic                      detect_o,
+  // Detection event
+  output logic                      detect_o,      // 1-cycle strobe
   output logic [$clog2(N)-1:0]      det_class_o,
-  output logic [7:0]                det_conf_o,
+  output logic [7:0]                det_conf_o,    // smoothed score, clamped >= 0
   output logic [3:0]                det_votes_o,
-  output logic                      busy_o
+  output logic                      busy_o         // evaluation in flight
 );
 
   localparam int unsigned CW = $clog2(N);
 
+  // --- moving averages -------------------------------------------------------
   logic [N-1:0][DATA_W-1:0] avg;
-  logic                     acc_busy;
   confidence_accumulator #(
     .N      (N),
     .DATA_W (DATA_W),
@@ -65,12 +68,12 @@ module temporal_smoothing #(
     .clk_i, .rst_ni, .clear_i,
     .update_i,
     .logits_i,
-    .avg_o  (avg),
-    .busy_o (acc_busy)
+    .avg_o (avg)
   );
 
+  // --- per-window winner history for majority voting -------------------------
   logic [CW-1:0]            win_hist_q [DEPTH];
-  logic [$clog2(DEPTH):0]   hist_fill_q;
+  logic [$clog2(DEPTH):0]   hist_fill_q;           // entries valid since clear
   logic [$clog2(DEPTH)-1:0] whead_q;
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
@@ -91,43 +94,48 @@ module temporal_smoothing #(
     end
   end
 
-  // Sequential argmax over avg[] after the fold completes (ties -> lowest idx).
-  typedef enum logic [1:0] {
-    ST_IDLE,
-    ST_SCAN,
-    ST_EVAL
-  } phase_e;
+  // --- smoothed winner (combinational over current averages) -----------------
+  logic [CW-1:0]            sm_idx;
+  logic signed [DATA_W-1:0] sm_val;
+  argmax #(
+    .N      (N),
+    .DATA_W (DATA_W)
+  ) u_argmax (
+    .values_i (avg),
+    .idx_o    (sm_idx),
+    .max_o    (sm_val)
+  );
 
-  phase_e                   phase_q;
-  logic                     pend_q;
-  logic                     acc_busy_d;
-  logic [CW-1:0]            scan_c_q;
-  logic [CW-1:0]            sm_idx_q;
-  logic signed [DATA_W-1:0] sm_val_q;
-  logic [3:0]               consec_q;
-  logic [7:0]               debounce_q;
-  logic [CW-1:0]            last_cand_q;
-
+  // Votes for the smoothed winner among recorded per-window winners.
   logic [3:0] votes;
   always_comb begin
     votes = '0;
     for (int d = 0; d < DEPTH; d++) begin
-      if ((32'(d) < 32'(hist_fill_q)) && (win_hist_q[d] == sm_idx_q)) begin
+      if ((32'(d) < 32'(hist_fill_q)) && (win_hist_q[d] == sm_idx)) begin
         votes = votes + 4'd1;
       end
     end
   end
 
+  // --- decision pipeline ------------------------------------------------------
+  logic       eval_q;        // evaluate one cycle after the update landed
+  logic [3:0] consec_q;
+  logic [7:0] debounce_q;
+  logic [CW-1:0] last_cand_q;
+
   wire candidate = en_i
-                 && target_mask_i[sm_idx_q]
-                 && (sm_val_q >= thresh_i)
+                 && target_mask_i[sm_idx]
+                 && (sm_val >= thresh_i)
                  && (votes >= vote_min_i);
 
+  // Run length including the current evaluation: 0 if not a candidate, resets
+  // to 1 on a class change, saturates at 15. This exact procedure is mirrored
+  // in ref_model.c (kws_smooth_step).
   logic [3:0] run;
   always_comb begin
     if (!candidate) begin
       run = 4'd0;
-    end else if ((consec_q != 4'd0) && (last_cand_q == sm_idx_q)) begin
+    end else if ((consec_q != 4'd0) && (last_cand_q == sm_idx)) begin
       run = (consec_q == 4'hF) ? consec_q : consec_q + 4'd1;
     end else begin
       run = 4'd1;
@@ -136,16 +144,11 @@ module temporal_smoothing #(
 
   wire fire = candidate && (debounce_q == '0) && (run >= min_consec_i);
 
-  assign busy_o = acc_busy | pend_q | (phase_q != ST_IDLE);
+  assign busy_o = eval_q;
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      phase_q     <= ST_IDLE;
-      pend_q      <= 1'b0;
-      acc_busy_d  <= 1'b0;
-      scan_c_q    <= '0;
-      sm_idx_q    <= '0;
-      sm_val_q    <= '0;
+      eval_q      <= 1'b0;
       consec_q    <= '0;
       debounce_q  <= '0;
       last_cand_q <= '0;
@@ -154,59 +157,29 @@ module temporal_smoothing #(
       det_conf_o  <= '0;
       det_votes_o <= '0;
     end else begin
-      detect_o   <= 1'b0;
-      acc_busy_d <= acc_busy;
+      detect_o <= 1'b0;
+      eval_q   <= update_i;
 
       if (clear_i) begin
-        phase_q    <= ST_IDLE;
-        pend_q     <= 1'b0;
+        eval_q     <= 1'b0;
         consec_q   <= '0;
         debounce_q <= '0;
-      end else begin
-        if (update_i) pend_q <= 1'b1;
+      end else if (eval_q) begin
+        // One evaluation per inference: the accumulator and winner history
+        // already include the newest sample (folded last cycle).
+        if (candidate) last_cand_q <= sm_idx;
 
-        unique case (phase_q)
-          ST_IDLE: begin
-            if (pend_q && acc_busy_d && !acc_busy) begin
-              // Seed scan with class 0; compare 1..N-1 next.
-              sm_idx_q <= '0;
-              sm_val_q <= signed'(avg[0]);
-              scan_c_q <= (N > 1) ? CW'(1) : '0;
-              pend_q   <= 1'b0;
-              phase_q  <= (N > 1) ? ST_SCAN : ST_EVAL;
-            end
-          end
-
-          ST_SCAN: begin
-            if (signed'(avg[scan_c_q]) > sm_val_q) begin
-              sm_val_q <= signed'(avg[scan_c_q]);
-              sm_idx_q <= scan_c_q;
-            end
-            if (scan_c_q == CW'(N - 1)) begin
-              phase_q <= ST_EVAL;
-            end else begin
-              scan_c_q <= scan_c_q + 1'b1;
-            end
-          end
-
-          ST_EVAL: begin
-            if (candidate) last_cand_q <= sm_idx_q;
-            if (fire) begin
-              detect_o    <= 1'b1;
-              det_class_o <= sm_idx_q;
-              det_conf_o  <= sm_val_q[DATA_W-1] ? 8'd0 : 8'(sm_val_q);
-              det_votes_o <= votes;
-              debounce_q  <= debounce_i;
-              consec_q    <= '0;
-            end else begin
-              consec_q <= run;
-              if (debounce_q != '0) debounce_q <= debounce_q - 1'b1;
-            end
-            phase_q <= ST_IDLE;
-          end
-
-          default: phase_q <= ST_IDLE;
-        endcase
+        if (fire) begin
+          detect_o    <= 1'b1;
+          det_class_o <= sm_idx;
+          det_conf_o  <= sm_val[DATA_W-1] ? 8'd0 : 8'(sm_val);
+          det_votes_o <= votes;
+          debounce_q  <= debounce_i;
+          consec_q    <= '0;   // a fresh run is required for the next event
+        end else begin
+          consec_q <= run;
+          if (debounce_q != '0) debounce_q <= debounce_q - 1'b1;
+        end
       end
     end
   end

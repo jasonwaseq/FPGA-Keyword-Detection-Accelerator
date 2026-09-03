@@ -9,8 +9,8 @@
 // Slicing would require the build system to emit P layout-dependent .mem
 // files per parallelism setting; full replication keeps one canonical file
 // for every P and costs (P-1) * ceil(array/512) extra EBRs - at the default
-// P=2 / 8 channels that is 2 of 30 EBRs. For P > 4 slice the initialization
-// files instead (see docs/architecture.md, "Scaling the MAC array").
+// P=2 that is 2 of 30 EBRs. For P > 4 slice the initialization files instead
+// (see docs/architecture.md, "Scaling the MAC array").
 // -----------------------------------------------------------------------------
 `default_nettype none
 

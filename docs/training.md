@@ -23,9 +23,7 @@ Google Speech Commands v2  (~2.4 GB, 105 k utterances)
 host/build/kws_featurize   (C, deployment MFCC)
       │  pass 1: corpus mean/std per coefficient  -> stats.txt (frozen)
       │  pass 2: INT8 windows (energy-centered, ±4-frame jitter,
-      │          background-noise mixing at 5..20 dB SNR, optional
-      │          ±10..15 % time-stretch weighted by class: 70% down/left,
-      │          35% up, 25% other keywords)
+      │          background-noise mixing at 5..20 dB SNR for training)
       ▼
 training/train_np.py       float twin of the datapath, Adam + weighted CE
       │                    (keywords 2x), then post-training INT8 quantization
@@ -56,7 +54,7 @@ make -C host featurize
 python3 training/prepare_manifests.py --data ~/kws_data/sc2 --out ~/kws_data/work
 host/build/kws_featurize --manifest ~/kws_data/work/train.txt --stats-out ~/kws_data/work/stats.txt
 host/build/kws_featurize --manifest ~/kws_data/work/train.txt --stats-in ~/kws_data/work/stats.txt \
-    --out ~/kws_data/work/train.bin --jitter --stretch --mix-dir ~/kws_data/sc2/_background_noise_
+    --out ~/kws_data/work/train.bin --jitter --mix-dir ~/kws_data/sc2/_background_noise_
 host/build/kws_featurize --manifest ~/kws_data/work/val.txt  --stats-in ~/kws_data/work/stats.txt --out ~/kws_data/work/val.bin
 host/build/kws_featurize --manifest ~/kws_data/work/test.txt --stats-in ~/kws_data/work/stats.txt --out ~/kws_data/work/test.bin
 host/build/kws_featurize --manifest ~/kws_data/work/test.txt --stats-in ~/kws_data/work/stats.txt --out ~/kws_data/work/test_full.bin --all-frames
@@ -116,12 +114,7 @@ bring-up with zero ML dependencies; CI checks it stays deterministic.
 
 ## Changing the keyword set
 
-1. Edit `KEYWORDS` in `training/prepare_manifests.py` (and `LABELS` /
-   `NUM_CLASSES` / `CONV_OUT_CH` in `model/kws_quant.py`).
-2. If geometry or class count changes: update `CONV_OUT_CH` /
-   `NUM_CLASSES` / `TARGET_MASK` in `rtl/kws_pkg.sv`, `target_mask`
-   defaults in `host/src/ref_model.c` and `model/kws_quant.py`
-   `SMOOTH_DEFAULTS`, and `labels` in `host/kws.ini`. Keep
-   `CONV_OUT_CH≤8` at P=2 for UP5K LC headroom with 10 classes (16 channels
-  overflowed LC at ~111%; keep EBR ≤30 separately).
+1. Edit `KEYWORDS` in `training/prepare_manifests.py`.
+2. If the class count changes: update `NUM_CLASSES` in `rtl/kws_pkg.sv` and
+   `model/kws_quant.py`, and `labels` in `host/kws.ini`.
 3. Re-run the pipeline above.

@@ -27,7 +27,7 @@ processes forever and speaks only when it detects a keyword.
  │                                     ▼                                 │  │
  │                            pooling_engine (max/avg)                   │  │
  │                              → pooled RAM (EBR)                       │  │
- │  weight_memory ──► classifier (dense 240→10 + argmax)                 │  │
+ │  weight_memory ──► classifier (dense 120→4 + argmax)                  │  │
  │  bias_memory   ──►                  ▼                                 │  │
  │                        temporal_smoothing (avg, vote,                 │  │
  │                          consec, debounce)                            │  │
@@ -48,26 +48,23 @@ processes forever and speaks only when it detects a keyword.
 | Conv1D (temporal, valid) | K=3, 40→8 ch → 30×8 | INT8×INT8 → INT24 acc |
 | Requant + ReLU | 30×8 | (acc·M + 2^(S−1)) ≫ S, sat8 |
 | Temporal pool (max/avg) | /2 → 15×8 | INT8 |
-| Dense | 120 → 10 logits | INT8×INT8 → INT24 acc |
-| Requant | 10 | same rescale, no ReLU |
+| Dense | 120 → 4 logits | INT8×INT8 → INT24 acc |
+| Requant | 4 | same rescale, no ReLU |
 | Smoothing | 4-deep history | moving avg + majority vote |
 
-Classes: 0=silence, 1=unknown, 2..9 = yes/no/up/down/left/right/on/off.
-`CONV_OUT_CH=8` fits the UP5K LC budget with 10 classes (~21/30 EBR at
-P=2). A 16-channel attempt reached ~111% LC and did not place. Windows
-overlap: stride is 8 frames (80 ms), so each frame participates in four
-windows. All geometry is parameterized (`rtl/kws_pkg.sv`) and echoed at
+Windows overlap: stride is 8 frames (80 ms), so each frame participates in
+four windows. All geometry is parameterized (`rtl/kws_pkg.sv`) and echoed at
 run time in the `RSP_VERSION` payload so host and bitstream can verify they
 agree.
 
 ## Key design decisions and tradeoffs
 
 ### Clocking — 12 MHz, no PLL
-One inference costs ~17 k cycles (P=2) against an 80 ms (960 k-cycle)
-stride budget: **~1.8 % utilization**. The UART is the real bottleneck. A PLL
+One inference costs ~15.4 k cycles (P=2) against an 80 ms (960 k-cycle)
+stride budget: **1.6 % utilization**. The UART is the real bottleneck. A PLL
 would buy nothing, cost a hard-macro dependency and add a timing variable;
-the design closes at ≥12 MHz as-is. `CLK_HZ` is a parameter if a faster link
-ever demands it.
+the design closes at 14.98 MHz worst-case as-is. `CLK_HZ` is a parameter if
+a faster link ever demands it.
 
 ### Feature buffer — commit pointers instead of double buffering
 The packet decoder writes payload bytes **speculatively** into the write
@@ -146,12 +143,12 @@ See [memory_map.md](memory_map.md) for layouts and address formulas.
 | Conv bias/param ROM | 10×32 | 1R | LUTs |
 | Activation RAM | 240×8 | 1W (conv) / 1R (pool) | 1 EBR |
 | Pooled RAM | 120×8 | 1W (pool) / 1R (classifier) | 1 EBR |
-| Dense weight ROM | 1200×8 | 1R | 3 EBR |
-| Dense bias/param ROM | 12×32 | 1R | LUTs |
+| Dense weight ROM | 480×8 | 1R | 1 EBR |
+| Dense bias/param ROM | 6×32 | 1R | LUTs |
 | Stats snapshot | 16×32 | 1W/1R | 2 EBR |
-| Smoothing history | 4×10×8 + sums | all-parallel update | FFs (by necessity) |
+| Smoothing history | 8×4×8 + sums | all-parallel update | FFs (by necessity) |
 
-Total: 21/30 EBR at P=2, 0/4 SPRAM (SPRAM's 16-bit single port fits nothing here
+Total: 19/30 EBR, 0/4 SPRAM (SPRAM's 16-bit single port fits nothing here
 better than EBR does; it remains free for a future deeper feature history).
 
 ## Reset domains

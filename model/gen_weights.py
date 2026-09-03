@@ -9,10 +9,9 @@ verification is bit-accurate against them) but are NOT trained: for real
 keyword-spotting accuracy, train with training/train.py and export with
 training/export_weights.py, which emits the identical file set.
 
-The class-2 kernel is seeded with low-frequency structure so that the host's
---selftest stimulus can provoke genuine detection events on untrained weights
-(useful for end-to-end hardware bring-up). Keyword classes that map onto a
-conv output channel (2..CONV_OUT_CH-1) get matched-filter structure too.
+The class-2 and class-3 kernels are seeded with low-frequency structure so
+that the host's --selftest stimulus can provoke genuine detection events on
+untrained weights (useful for end-to-end hardware bring-up).
 
 Usage: python model/gen_weights.py [--out weights] [--seed 20260712]
 """
@@ -35,11 +34,11 @@ def synth_weights(seed: int):
                for _ in range(q.CONV_K)] for _ in range(q.CONV_OUT_CH)]
     conv_b = [rng.randint(-4096, 4096) for _ in range(q.CONV_OUT_CH)]
 
-    # Give keyword classes matched-filter structure where a dedicated conv
-    # channel exists (oc < CONV_OUT_CH). Self-test still targets class 2.
+    # Give the keyword classes matched-filter structure: channel oc responds
+    # to a cosine-shaped MFCC envelope. This makes bring-up detections
+    # reproducible (host --selftest synthesizes the matching envelope).
     import math
-    seed_ocs = range(2, min(q.NUM_CLASSES, q.CONV_OUT_CH))
-    for oc in seed_ocs:
+    for oc in (2, 3):
         for k in range(q.CONV_K):
             for ic in range(q.NUM_MFCC):
                 v = 20.0 * math.cos(2.0 * math.pi * (oc - 1) * ic / q.NUM_MFCC)
@@ -49,9 +48,9 @@ def synth_weights(seed: int):
                for _ in range(q.NUM_CLASSES)]
     dense_b = [rng.randint(-2048, 2048) for _ in range(q.NUM_CLASSES)]
 
-    # Bias each seeded keyword class toward its matched conv channel so that
-    # a strong channel-oc response wins the argmax.
-    for cls in seed_ocs:
+    # Bias each keyword class toward its matched conv channel so that a strong
+    # channel-oc response wins the argmax.
+    for cls in (2, 3):
         for t in range(q.POOL_OUT_LEN):
             dense_w[cls][t * q.CONV_OUT_CH + cls] = 24
 

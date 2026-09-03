@@ -25,8 +25,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
 import kws_quant as q
 from train_np import load_kwsf
 
-LABELS = q.LABELS
-LAB_IDX = {lab: i for i, lab in enumerate(LABELS) if i >= 2}
+LABELS = ["silence", "unknown", "yes", "no"]
+LAB_IDX = {"yes": 2, "no": 3}
 
 
 def stream_logit_seq(model, frames):
@@ -59,17 +59,15 @@ def run(seq, schedule, tol_s=1.6, **cfg):
                 used[i] = True
                 hits += 1
                 matched = True
-                log.append(f"  {t:6.2f}s  {LABELS[cls]:8s} conf={conf:3d}  "
-                           f"HIT ({lab} @ {ts:.2f}s)")
+                log.append(f"  {t:6.2f}s  {LABELS[cls]:4s} conf={conf:3d}  HIT ({lab} @ {ts:.2f}s)")
                 break
         if not matched:
             fa += 1
-            log.append(f"  {t:6.2f}s  {LABELS[cls]:8s} conf={conf:3d}  "
-                       f"FALSE-ACCEPT")
+            log.append(f"  {t:6.2f}s  {LABELS[cls]:4s} conf={conf:3d}  FALSE-ACCEPT")
     misses = used.count(False)
     for i, (ts, lab) in enumerate(schedule):
         if not used[i]:
-            log.append(f"  {ts:6.2f}s  {lab:8s}            MISS")
+            log.append(f"  {ts:6.2f}s  {lab:4s}            MISS")
     return hits, misses, fa, log
 
 

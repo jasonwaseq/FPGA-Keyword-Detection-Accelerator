@@ -4,7 +4,7 @@
 
 | Resource | Used | Total |
 |---|---|---|
-| EBR (4 Kbit block RAM) | 21 | 30 |
+| EBR (4 Kbit block RAM) | 19 | 30 |
 | SPRAM (32 KB single-port) | 0 | 4 |
 | SB_MAC16 (DSP) | 7 | 8 |
 
@@ -29,12 +29,12 @@ identical ROM banks (2 EBR each); lane L computes output channels
 `oc_group·P + L` and addresses its bank at `oc·120 + k·40 + ic`, maintained
 incrementally.
 
-### `dense_weights.mem` — 1200 × 8-bit
+### `dense_weights.mem` — 480 × 8-bit
 `index = class·120 + (t·8 + ch)`. The flatten order `t·CH+ch` matches the
 pooled RAM layout, so the classifier walks both memories with single
-incrementing addresses. 3 EBR.
+incrementing addresses. 1 EBR.
 
-### `conv_bias.mem` — 10 × 32-bit, `dense_bias.mem` — 12 × 32-bit
+### `conv_bias.mem` — 10 × 32-bit, `dense_bias.mem` — 6 × 32-bit
 `[bias[0..N-1], M, S]` per layer: biases in the INT32 accumulator domain
 (bounded to ±2²³, asserted), then the layer's requantization multiplier and
 shift. Synthesizes to LUT logic (a handful of constants).
@@ -79,6 +79,6 @@ defaults" marks the three synchronized definitions.
 | cfg_vote_min | 2 | parameter default |
 | cfg_min_consec | 1 | parameter default |
 | cfg_debounce | 12 inferences | parameter default |
-| cfg_target_mask | 0b11_1111_1100 | parameter default |
+| cfg_target_mask | 0b1100 | parameter default |
 | cfg_pool_mode | 0 (max) | parameter default |
 | cfg_smooth_en | 1 | parameter default |

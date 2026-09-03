@@ -18,8 +18,7 @@
 #endif
 
 static const int P     = PARAM_PARALLEL;
-static const int KDEPTH = KWS_CONV_OUT_CH * KWS_CONV_K * KWS_NUM_MFCC; // 960
-static const int KA_W  = 10;                       // clog2(960)
+static const int KA_W  = 10;                       // clog2(8*3*40 = 960)
 static const int HISTD = 64;
 
 int main(int argc, char **argv)
@@ -32,8 +31,8 @@ int main(int argc, char **argv)
     SyncRead<uint32_t, uint8_t> feat_ram(HISTD * 64);
     // kernel banks: each holds the full flattened array
     SyncRead<uint32_t, uint8_t> krn[4] = {
-        SyncRead<uint32_t, uint8_t>(KDEPTH), SyncRead<uint32_t, uint8_t>(KDEPTH),
-        SyncRead<uint32_t, uint8_t>(KDEPTH), SyncRead<uint32_t, uint8_t>(KDEPTH)
+        SyncRead<uint32_t, uint8_t>(960), SyncRead<uint32_t, uint8_t>(960),
+        SyncRead<uint32_t, uint8_t>(960), SyncRead<uint32_t, uint8_t>(960)
     };
     SyncRead<uint32_t, uint32_t> bias_rom(KWS_CONV_OUT_CH + 2);
 

@@ -31,4 +31,3 @@ training/runs/
 training/data/
 *.ckpt
 *.pt
-test_*.wav

@@ -39,12 +39,12 @@ pipeline design, scheduling, verification and honest engineering tradeoffs
   bench.
 * **Real keyword recognition, validated on silicon**: trained on Speech
   Commands v2 through the deployment feature pipeline, thresholds tuned on
-  held-out streams, and proven on the live board — real spoken keywords
+  held-out streams, and proven on the live board — real spoken "yes"/"no"
   from the official test split detected over the UART link, every event
   bit-exact against the reference.
-* **Fits and closes**: geometry is `CONV_OUT_CH=8`, `NUM_CLASSES=10`
-  (8 keywords + silence/unknown), targeting ~21/30 EBR at P=2 — see
-  [docs/performance.md](docs/performance.md) for place/timing and accuracy.
+* **Fits and closes**: 4607/5280 LC (87 %), 19/30 EBR, 7/8 DSP,
+  14.98 MHz worst-case against the 12 MHz clock — with the area/timing
+  war stories written up in [docs/performance.md](docs/performance.md).
 
 ## Repository layout
 
@@ -81,11 +81,13 @@ Toolchain: [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build)
 + GCC + make + Python 3. Windows/MSYS2 works identically — see
 [docs/build.md](docs/build.md).
 
-The shipped weights are **trained on Google Speech Commands v2** (8 keywords:
-yes/no/up/down/left/right/on/off; provenance in `weights/model_params.json`)
-with features from the exact deployment MFCC front end. See
-[docs/performance.md](docs/performance.md) for accuracy and
-[docs/training.md](docs/training.md) to retrain.
+The shipped weights are **trained on Google Speech Commands v2** (keywords
+"yes"/"no"; 85 % 4-class INT8 accuracy; provenance in
+`weights/model_params.json`) with features from the exact deployment MFCC
+front end and detection thresholds tuned on held-out streams — validated on
+real hardware end to end: 7/8 held-out spoken keywords detected on the live
+iCEBreaker with every event bit-exact against the reference model. To
+retrain or change keywords: [docs/training.md](docs/training.md).
 
 ## Documentation
 

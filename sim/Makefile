@@ -53,9 +53,6 @@ REF_OBJS := $(OUT)/ref_model.o $(OUT)/protocol.o
 $(OUT)/%.o: $(TOP_DIR)/host/src/%.c | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(OUT)/ref_model.o: $(TOP_DIR)/host/include/kws_ref.h \
-                    $(TOP_DIR)/weights/kws_weights.h
-
 $(OUT):
 	mkdir -p $(OUT)
 
